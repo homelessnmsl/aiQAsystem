@@ -24,3 +24,13 @@ env/
 dist/
 build/
 *.log
+
+# Runtime data
+data/uploads/*
+!data/uploads/.gitkeep
+data/chroma/*
+!data/chroma/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+data/*.db
+data/*.sqlite3
