@@ -3,6 +3,7 @@
 # 安装：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 # 规则：版本锁定（NFR-C-01）；升级依赖需在周会说明并同步全组（CONTRIBUTING 风险约定）
 # 说明：sentence-transformers 会连带安装 CPU 版 PyTorch（下载约 200~300MB），首次安装约 5~15 分钟
+# 维护：W1-11 由 AD 提交；W1-12 DEV 补充 email-validator / python-dotenv（课程代码依赖）
 # ============================================================
 
 # ---------- Web 框架（第1周，全员） ----------
@@ -11,6 +12,8 @@ uvicorn[standard]==0.32.1
 python-multipart==0.0.20          # multipart/form-data 文件上传解析
 pydantic==2.10.4
 pydantic-settings==2.7.0          # 读取 .env 生成 Settings
+python-dotenv==1.0.1              # .env 读取（课程代码 day01~day05 显式依赖）
+email-validator==2.2.0            # Pydantic EmailStr 邮箱校验（day01 作业1）
 
 # ---------- LLM / HTTP（第1周，全员） ----------
 openai==1.59.6                    # DeepSeek 兼容 OpenAI 协议，重试/超时/流式开箱即用
