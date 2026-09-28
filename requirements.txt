@@ -1,0 +1,41 @@
+# ============================================================
+# aiQAsystem 依赖清单（Python 3.12+）
+# 安装：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 规则：版本锁定（NFR-C-01）；升级依赖需在周会说明并同步全组（CONTRIBUTING 风险约定）
+# 说明：sentence-transformers 会连带安装 CPU 版 PyTorch（下载约 200~300MB），首次安装约 5~15 分钟
+# 维护：W1-11 由 AD 提交；W1-12 DEV 补充 email-validator / python-dotenv（课程代码依赖）
+# ============================================================
+
+# ---------- Web 框架（第1周，全员） ----------
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20          # multipart/form-data 文件上传解析
+pydantic==2.10.4
+pydantic-settings==2.7.0          # 读取 .env 生成 Settings
+python-dotenv==1.0.1              # .env 读取（课程代码 day01~day05 显式依赖）
+email-validator==2.2.0            # Pydantic EmailStr 邮箱校验（day01 作业1）
+
+# ---------- LLM / HTTP（第1周，全员） ----------
+openai==1.59.6                    # DeepSeek 兼容 OpenAI 协议，重试/超时/流式开箱即用
+httpx==0.28.1                     # 异步 HTTP（健康检查、评测脚本）
+requests==2.32.3                  # Streamlit 前端调用后端接口
+
+# ---------- RAG：向量库 / 切片 / Embedding / Rerank（第2~3周，AD/DEV） ----------
+numpy==1.26.4                     # 固定 1.26.x，规避 chromadb 0.5.x 与 numpy 2.x 的兼容问题
+chromadb==0.5.23                  # 向量库（PersistentClient 本地持久化）
+langchain-text-splitters==0.3.4   # RecursiveCharacterTextSplitter 中文切片
+sentence-transformers==3.3.1      # 本地 Embedding（bge-small-zh）与 Rerank（bge-reranker-base）
+
+# ---------- 文档解析（第2周，AD） ----------
+pypdf==5.1.0                      # PDF
+python-docx==1.1.2                # Word .docx
+openpyxl==3.1.5                   # Excel .xlsx
+chardet==5.2.0                    # TXT/MD 编码自动识别
+
+# ---------- 前端（第1周，UI） ----------
+streamlit==1.41.1
+pandas==2.2.3
+
+# ---------- 测试与质量（第1~3周，DEV/PE） ----------
+pytest==8.3.4
+pytest-asyncio==0.25.0

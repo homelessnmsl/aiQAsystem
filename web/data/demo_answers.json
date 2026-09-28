@@ -1,0 +1,119 @@
+{
+  "version": "v1",
+  "updated": "2026-09-28",
+  "note": "演示模式预置问答（需求 FR-UI-05 / US-14）：断网或后端未启动时，仍能完整演示「提问 → 答案 → 引用核对 → 反馈」全流程。数据取自 RA 的 tests/sample_docs/ 虚构企业文档，仅供演示。",
+  "items": [
+    {
+      "question": "公司年假有多少天？",
+      "keywords": ["年假", "休假", "假期", "带薪"],
+      "answer_type": "answered",
+      "answer": "按《员工手册》规定，年假天数按司龄分档：\n\n- 满 1 年不满 10 年：**5 天/年** [1]\n- 满 10 年不满 20 年：**10 天/年** [1]\n- 满 20 年以上：**15 天/年** [1]\n\n需要注意：试用期不享受年假，转正后按当年剩余日历天数折算，不足 1 天不计；年假最多结转 5 天，需在次年 3 月 31 日前休完 [1]。",
+      "citations": [
+        {
+          "index": 1,
+          "doc_id": "doc_demo_01",
+          "chunk_id": "doc_demo_01_c003",
+          "source_file": "01_员工手册.pdf",
+          "location": "第 3 页",
+          "snippet": "第三章 假期管理：员工累计工作满 1 年不满 10 年的，年休假 5 天；满 10 年不满 20 年的，年休假 10 天；满 20 年以上的，年休假 15 天。试用期员工不享受年休假，转正后按当年剩余日历天数折算，折算后不足 1 天的部分不享受。年休假最多结转 5 天，须于次年 3 月 31 日前使用完毕。",
+          "score": 0.86
+        }
+      ],
+      "retrieved": [
+        {"chunk_id": "doc_demo_01_c003", "source_file": "01_员工手册.pdf", "location": "第 3 页", "score": 0.86, "rerank_score": null},
+        {"chunk_id": "doc_demo_08_c005", "source_file": "08_考勤与假期管理规定.txt", "location": "第 5 章", "score": 0.71, "rerank_score": null}
+      ],
+      "latency_ms": 3400,
+      "model": "deepseek-chat（演示数据）",
+      "trace_id": "tr_demo_000001",
+      "message_id": "msg_demo_000001",
+      "session_id": "conv_demo"
+    },
+    {
+      "question": "出差住宿标准是多少？",
+      "keywords": ["住宿", "出差", "差旅", "标准", "报销"],
+      "answer_type": "answered",
+      "answer": "出差住宿标准按城市级别执行（「差旅标准」工作表）：\n\n- 一线城市：**500 元/晚** [1]\n- 二线城市：**400 元/晚** [1]\n- 其他城市：**300 元/晚** [1]\n\n同表还规定了差旅餐补：一线 100 元/天，二线 80 元/天，其他城市 60 元/天 [1]。",
+      "citations": [
+        {
+          "index": 1,
+          "doc_id": "doc_demo_03",
+          "chunk_id": "doc_demo_03_c002",
+          "source_file": "03_报销制度与费用标准.xlsx",
+          "location": "「差旅标准」工作表 · 第 3~8 行",
+          "snippet": "城市级别 | 住宿标准（元/晚） | 餐补（元/天）\n一线 | 500 | 100\n二线 | 400 | 80\n其他 | 300 | 60",
+          "score": 0.81
+        }
+      ],
+      "retrieved": [
+        {"chunk_id": "doc_demo_03_c002", "source_file": "03_报销制度与费用标准.xlsx", "location": "「差旅标准」工作表", "score": 0.81, "rerank_score": null}
+      ],
+      "latency_ms": 2900,
+      "model": "deepseek-chat（演示数据）",
+      "trace_id": "tr_demo_000002",
+      "message_id": "msg_demo_000002",
+      "session_id": "conv_demo"
+    },
+    {
+      "question": "试用期转正要走哪些流程？",
+      "keywords": ["转正", "试用期", "流程", "入职"],
+      "answer_type": "answered",
+      "answer": "转正申请共 5 个环节 [1]：\n\n1. 员工在试用期结束前 **10 个工作日**提交转正申请；\n2. 直属上级评估；\n3. 部门负责人复核；\n4. HR 审批；\n5. 结果通知本人。\n\n补充：试用期标准为 3 个月，表现优秀可提前至 2 个月；带教导师补贴 500 元/月，随工资发放 [1]。",
+      "citations": [
+        {
+          "index": 1,
+          "doc_id": "doc_demo_06",
+          "chunk_id": "doc_demo_06_c002",
+          "source_file": "06_入职培训指南.pdf",
+          "location": "第 2 页",
+          "snippet": "转正流程：员工应于试用期结束前 10 个工作日通过 OA 提交转正申请，经直属上级评估、部门负责人复核、HR 审批后，由 HR 通知本人结果。试用期为 3 个月，表现优秀者经审批可提前至 2 个月转正。",
+          "score": 0.79
+        }
+      ],
+      "retrieved": [
+        {"chunk_id": "doc_demo_06_c002", "source_file": "06_入职培训指南.pdf", "location": "第 2 页", "score": 0.79, "rerank_score": null}
+      ],
+      "latency_ms": 3100,
+      "model": "deepseek-chat（演示数据）",
+      "trace_id": "tr_demo_000003",
+      "message_id": "msg_demo_000003",
+      "session_id": "conv_demo"
+    },
+    {
+      "question": "住宿标准是多少？",
+      "keywords": ["住宿标准是多少"],
+      "answer_type": "clarify",
+      "answer": "知识库中存在多档住宿标准，需要你补充一个信息才能给出准确数值：你的出差城市属于哪一级？\n\n- 一线城市：500 元/晚\n- 二线城市：400 元/晚\n- 其他城市：300 元/晚\n\n请回复城市名称或级别，我再给出适用标准。",
+      "citations": [
+        {
+          "index": 1,
+          "doc_id": "doc_demo_03",
+          "chunk_id": "doc_demo_03_c002",
+          "source_file": "03_报销制度与费用标准.xlsx",
+          "location": "「差旅标准」工作表",
+          "snippet": "城市级别 | 住宿标准（元/晚）\n一线 | 500\n二线 | 400\n其他 | 300",
+          "score": 0.72
+        }
+      ],
+      "retrieved": [],
+      "latency_ms": 2600,
+      "model": "deepseek-chat（演示数据）",
+      "trace_id": "tr_demo_000004",
+      "message_id": "msg_demo_000004",
+      "session_id": "conv_demo"
+    },
+    {
+      "question": "公司食堂几点开饭？",
+      "keywords": ["食堂", "班车", "停车", "年会", "餐厅"],
+      "answer_type": "not_found",
+      "answer": "未在知识库中找到相关依据，因此不作推测性回答。\n\n可尝试：联系行政管理部门，或请管理员上传相关后勤制度文档后再提问。",
+      "citations": [],
+      "retrieved": [],
+      "latency_ms": 1200,
+      "model": "deepseek-chat（演示数据）",
+      "trace_id": "tr_demo_000005",
+      "message_id": "msg_demo_000005",
+      "session_id": "conv_demo"
+    }
+  ]
+}
