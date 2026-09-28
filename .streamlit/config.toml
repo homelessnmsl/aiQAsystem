@@ -1,0 +1,16 @@
+# Streamlit 前端配置（UI 主责）
+# 位置：仓库根目录 .streamlit/，执行 `python -m streamlit run web/app.py` 时自动加载
+
+[theme]
+primaryColor = "#2563EB"           # 主色：与答案中引用序号 [n] 的高亮保持一致
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5F9"
+textColor = "#0F172A"
+font = "sans serif"
+
+[server]
+port = 8501
+headless = true                    # 启动时不自动弹浏览器，由演示者手动打开
+
+[browser]
+gatherUsageStats = false           # 关闭匿名统计上报（合规）

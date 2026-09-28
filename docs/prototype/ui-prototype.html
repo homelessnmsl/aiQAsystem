@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>企业知识库智能问答系统 · 页面原型 v1（W1-17）</title>
+<style>
+  :root{
+    --primary:#2563EB; --primary-soft:#EFF6FF;
+    --ok:#15803D; --ok-soft:#DCFCE7;
+    --warn:#B45309; --warn-soft:#FEF3C7;
+    --info:#1D4ED8; --info-soft:#DBEAFE;
+    --danger:#DC2626; --danger-soft:#FEE2E2;
+    --ink:#0F172A; --muted:#475569; --line:#E2E8F0; --bg-soft:#F8FAFC;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;color:var(--ink);background:#EEF2F7}
+  .topbar{background:#fff;border-bottom:1px solid var(--line);padding:12px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .topbar h1{font-size:16px;margin:0;font-weight:700}
+  .topbar .tag{font-size:12px;color:var(--muted);background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:2px 10px}
+  .tabs{display:flex;gap:8px}
+  .tab{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer}
+  .tab.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .states{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+  .chip{border:1px dashed var(--line);background:#fff;border-radius:999px;padding:4px 11px;font-size:12px;cursor:pointer;color:var(--muted)}
+  .chip.active{border-style:solid;border-color:var(--primary);color:var(--primary);background:var(--primary-soft);font-weight:600}
+  .stage{display:flex;justify-content:center;padding:20px}
+  .frame{width:1180px;max-width:100%;height:720px;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;box-shadow:0 12px 30px rgba(15,23,42,.08)}
+  /* 侧栏 */
+  .side{width:290px;border-right:1px solid var(--line);background:var(--bg-soft);padding:16px;overflow:auto;flex:none}
+  .side h2{font-size:15px;margin:0 0 2px}
+  .side .cap{font-size:12px;color:var(--muted);margin-bottom:12px}
+  .block{border-top:1px solid var(--line);margin:14px 0;padding-top:12px}
+  .block .t{font-size:13px;font-weight:600;margin-bottom:8px}
+  .input{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;background:#fff}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;font-size:12.5px;cursor:pointer}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .row{display:flex;gap:8px}
+  .status{display:inline-block;font-size:12px;padding:3px 9px;border-radius:999px;font-weight:600}
+  .ok{color:var(--ok);background:var(--ok-soft)}
+  .err{color:var(--danger);background:var(--danger-soft)}
+  .switch{display:flex;align-items:center;gap:8px;font-size:13px}
+  .pill{width:36px;height:20px;border-radius:999px;background:#CBD5E1;position:relative;cursor:pointer;flex:none}
+  .pill:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.18s}
+  .pill.on{background:var(--primary)}
+  .pill.on:after{left:18px}
+  .metric{font-size:22px;font-weight:700}
+  .link{color:var(--primary);font-size:13px;cursor:pointer}
+  /* 主区 */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .main .head{padding:18px 24px 6px}
+  .main .head h3{margin:0 0 4px;font-size:19px}
+  .main .head p{margin:0;font-size:13px;color:var(--muted)}
+  .stream{flex:1;overflow:auto;padding:10px 24px 24px}
+  .msg{display:flex;gap:10px;margin:14px 0}
+  .avatar{width:30px;height:30px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:14px;flex:none}
+  .bubble{flex:1;min-width:0}
+  .bubble.user{background:var(--primary);color:#fff;border-radius:12px;padding:9px 13px;display:inline-block;max-width:70%}
+  .card{border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .plain{background:#fff}
+  .badge{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:2px 10px;margin-bottom:8px}
+  .b-ok{color:var(--ok);background:var(--ok-soft);border:1px solid #15803D33}
+  .b-warn{color:var(--warn);background:var(--warn-soft);border:1px solid #B4530933}
+  .b-info{color:var(--info);background:var(--info-soft);border:1px solid #1D4ED833}
+  .answer{font-size:14px;line-height:1.85}
+  .answer ul{margin:6px 0;padding-left:20px}
+  sup.ref{color:var(--primary);font-weight:700;background:var(--primary-soft);border-radius:4px;padding:0 3px;font-size:11px}
+  .cite-cap{font-size:12px;color:var(--muted);margin:14px 0 6px}
+  .cite{border:1px solid var(--line);border-radius:10px;margin-bottom:6px;overflow:hidden}
+  .cite summary{cursor:pointer;padding:9px 12px;font-size:13px;list-style:none;display:flex;justify-content:space-between;gap:10px}
+  .cite summary::-webkit-details-marker{display:none}
+  .cite summary:hover{background:var(--bg-soft)}
+  .cite .score{color:var(--muted);font-size:12px;font-weight:400}
+  .snippet{padding:0 14px 12px;font-size:13px;color:#334155;line-height:1.8}
+  .snippet .quote{border-left:3px solid var(--primary);background:var(--bg-soft);padding:8px 12px;border-radius:0 8px 8px 0}
+  .meta{font-size:11.5px;color:var(--muted);margin-top:6px}
+  .feedback{display:flex;gap:8px;margin-top:12px;align-items:center}
+  .note{font-size:12px;color:var(--muted)}
+  .alert{border-radius:10px;padding:11px 14px;font-size:13.5px;line-height:1.7;border:1px solid}
+  .a-info{background:var(--info-soft);border-color:#1D4ED833}
+  .a-warn{background:var(--warn-soft);border-color:#B4530933}
+  .a-err{background:var(--danger-soft);border-color:#DC262633}
+  .a-demo{background:#FFFBEB;border-color:#F59E0B55}
+  .composer{border-top:1px solid var(--line);padding:12px 24px 16px;background:#fff}
+  .composer .box{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;color:#94A3B8;font-size:13.5px}
+  .examples{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .example{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;font-size:12.5px;cursor:pointer}
+  .example:hover{border-color:var(--primary);color:var(--primary)}
+  /* 知识库页 */
+  .dash{padding:18px 24px;overflow:auto}
+  .drop{border:2px dashed #CBD5E1;border-radius:12px;background:var(--bg-soft);padding:22px;text-align:center}
+  .drop .big{font-size:15px;font-weight:600}
+  .drop .sub{font-size:12.5px;color:var(--muted);margin-top:6px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{font-size:12px;color:var(--muted);font-weight:600;background:var(--bg-soft)}
+  .toast{position:fixed;right:24px;bottom:24px;background:#0F172A;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}
+  .hidden{display:none !important}
+  .legend{font-size:12px;color:var(--muted);padding:0 22px 18px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>企业知识库智能问答系统 · 页面原型 v1</h1>
+  <span class="tag">W1-17 交付物 · UI 智能体交互工程师</span>
+  <div class="tabs">
+    <button class="tab active" data-page="chat">问答页</button>
+    <button class="tab" data-page="kb">知识库管理页</button>
+  </div>
+  <div class="states" id="stateBar">
+    <button class="chip active" data-state="empty">空态</button>
+    <button class="chip" data-state="loading">加载态</button>
+    <button class="chip" data-state="answered">已回答 + 引用</button>
+    <button class="chip" data-state="notfound">未找到依据</button>
+    <button class="chip" data-state="clarify">需要澄清</button>
+    <button class="chip" data-state="demo">演示模式</button>
+    <button class="chip" data-state="error">错误态</button>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="frame">
+    <!-- ===================== 侧栏 ===================== -->
+    <aside class="side">
+      <h2>💬 企业知识库智能问答</h2>
+      <div class="cap">Streamlit 前端骨架 · 第1周 UI 交付</div>
+
+      <div class="block">
+        <div class="t">服务连接</div>
+        <input class="input" value="http://127.0.0.1:8000"/>
+        <div class="row" style="margin-top:8px">
+          <button class="btn">检查连接</button><button class="btn">刷新</button>
+        </div>
+        <div style="margin-top:8px" id="conn"><span class="status ok">后端连接正常</span></div>
+      </div>
+
+      <div class="block">
+        <div class="t">演示模式</div>
+        <div class="switch"><span class="pill" id="pill"></span><span>使用预置问答（断网可演示）</span></div>
+      </div>
+
+      <div class="block">
+        <div class="t">会话</div>
+        <div class="cap" style="margin:0 0 8px">当前会话：<code>conv_web_20260928</code></div>
+        <div class="row"><button class="btn">新建会话</button><button class="btn">清空对话</button></div>
+      </div>
+
+      <div class="block">
+        <div class="t">知识库概况</div>
+        <div class="metric">8 <span style="font-size:12px;color:var(--muted);font-weight:400">份文档 · 132 个切片</span></div>
+        <div class="link" style="margin-top:8px">📚 前往知识库管理</div>
+      </div>
+
+      <div class="block"><div class="cap">答案由 AI 依据知识库内容生成，请以引用原文为准。</div></div>
+    </aside>
+
+    <!-- ===================== 主区 ===================== -->
+    <main class="main">
+      <div class="head">
+        <h3 id="pageTitle">企业知识库智能问答</h3>
+        <p id="pageSub">上传公司文档后即可提问；答案会标注来源文件与页码 / 工作表 / 行号，点开引用即可核对原文。</p>
+      </div>
+
+      <!-- 问答页 -->
+      <section id="viewChat" style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <div class="stream" id="stream"></div>
+        <div class="composer">
+          <div class="box"><span>请输入你的问题，例如：公司年假有多少天？</span><span>↵</span></div>
+        </div>
+      </section>
+
+      <!-- 知识库管理页 -->
+      <section id="viewKb" class="dash hidden">
+        <div class="block" style="border-top:none;margin-top:0;padding-top:0">
+          <div class="t" style="font-size:15px">上传文档（US-01 / US-02）</div>
+          <div class="drop">
+            <div class="big">⬆ 拖拽或点击选择文件</div>
+            <div class="sub">支持 PDF / Word / Excel / TXT / Markdown；单文件 ≤ 20MB，单次最多 5 个</div>
+          </div>
+          <div class="cap" style="margin-top:10px">已选择：《01_员工手册.pdf》《03_报销制度与费用标准.xlsx》</div>
+          <button class="btn primary">开始上传并建立索引</button>
+          <div id="uploadResult" style="margin-top:12px"></div>
+        </div>
+
+        <div class="block">
+          <div class="t" style="font-size:15px">已入库文档（US-11）</div>
+          <table>
+            <thead><tr><th>文件名</th><th>格式</th><th>切片数</th><th>上传时间</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr><td>01_员工手册.pdf</td><td>PDF</td><td>96</td><td>2026-10-02 10:12</td><td><span class="status ok">已入库</span></td><td><button class="btn" data-del="01_员工手册.pdf">删除</button></td></tr>
+              <tr><td>03_报销制度与费用标准.xlsx</td><td>XLSX</td><td>42</td><td>2026-10-02 10:13</td><td><span class="status ok">已入库</span></td><td><button class="btn" data-del="03_报销制度与费用标准.xlsx">删除</button></td></tr>
+              <tr><td>07_客户支持服务流程.docx</td><td>DOCX</td><td>0</td><td>2026-10-02 10:15</td><td><span class="status ok">处理中</span></td><td><button class="btn" data-del="07_客户支持服务流程.docx">删除</button></td></tr>
+            </tbody>
+          </table>
+          <div id="delConfirm" class="hidden" style="margin-top:12px"></div>
+        </div>
+
+        <div class="block">
+          <div class="t" style="font-size:15px">上传拦截示例（US-02）</div>
+          <div class="alert a-err">《管理报表.xls》格式不支持，目前仅支持 PDF、Word、Excel、TXT、Markdown。<br/>《年度报告.pdf》有 34.2MB，超过 20MB 限制，请压缩后再传。</div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="legend">原型说明：点击顶部「问答页 / 知识库管理页」切换页面；点击右侧状态胶囊切换六种关键状态；点击引用折叠条可展开原文片段。</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const stream = document.getElementById('stream');
+const stateBar = document.getElementById('stateBar');
+
+function badge(kind, text){
+  const cls = kind === 'ok' ? 'b-ok' : kind === 'warn' ? 'b-warn' : 'b-info';
+  return '<span class="badge ' + cls + '">' + text + '</span>';
+}
+function citeBlock(items, openFirst){
+  if(!items.length){
+    return '<div class="cite-cap">本条回答没有引用来源（未在知识库中找到依据）。</div>';
+  }
+  let html = '<div class="cite-cap">📎 引用来源（' + items.length + '）— 点开可核对原文</div>';
+  items.forEach(function(c, i){
+    html += '<details class="cite"' + (openFirst && i === 0 ? ' open' : '') + '>' +
+      '<summary><span>[' + c.n + '] 📄 ' + c.file + ' · ' + c.loc + '</span><span class="score">相关度 ' + c.score + '</span></summary>' +
+      '<div class="snippet"><div class="quote">' + c.text + '</div>' +
+      '<div class="meta">doc_id: ' + c.doc + ' · chunk_id: ' + c.chunk + '</div></div></details>';
+  });
+  return html;
+}
+const CITES = {
+  leave: [{n:1, file:'01_员工手册.pdf', loc:'第 3 页', score:'0.86', doc:'doc_a1b2c3', chunk:'doc_a1b2c3_c003',
+    text:'第三章 假期管理：员工累计工作满 1 年不满 10 年的，年休假 5 天；满 10 年不满 20 年的，年休假 10 天；满 20 年以上的，年休假 15 天。试用期员工不享受年休假，转正后按当年剩余日历天数折算。'}],
+  hotel: [{n:1, file:'03_报销制度与费用标准.xlsx', loc:'「差旅标准」工作表 · 第 3~8 行', score:'0.81', doc:'doc_d4e5f6', chunk:'doc_d4e5f6_c002',
+    text:'城市级别 | 住宿标准（元/晚） | 餐补（元/天）<br/>一线 | 500 | 100<br/>二线 | 400 | 80<br/>其他 | 300 | 60'}]
+};
+
+function assistantWrap(inner){ return '<div class="msg"><div class="avatar">🤖</div><div class="bubble"><div class="card plain">' + inner + '</div></div></div>'; }
+function userWrap(text){ return '<div class="msg" style="justify-content:flex-end"><div class="bubble user">' + text + '</div></div>'; }
+
+const STATES = {
+  empty: function(){
+    return '<div class="card" style="background:var(--bg-soft);border-color:var(--line)">' +
+      '<div style="font-size:15px;font-weight:600">👋 问问公司文档里的那些事</div>' +
+      '<div class="note" style="margin-top:6px;line-height:1.8">直接在下方输入问题即可，答案会附上原文出处方便你核对。<br/>例如：年假有多少天？出差住宿标准是多少？试用期转正要走哪些流程？</div>' +
+      '<div class="examples">' +
+      '<span class="example" data-ask="leave">公司年假有多少天？</span>' +
+      '<span class="example" data-ask="hotel">出差住宿标准是多少？</span>' +
+      '<span class="example" data-ask="leave">试用期转正要走哪些流程？</span></div></div>';
+  },
+  loading: function(){
+    return userWrap('公司年假有多少天？') + assistantWrap('<div class="note">⏳ 正在检索知识库…</div>');
+  },
+  answered: function(){
+    return userWrap('公司年假有多少天？') + assistantWrap(
+      badge('ok','已找到依据') +
+      '<div class="answer">按《员工手册》规定，年假天数按司龄分档：<ul>' +
+      '<li>满 1 年不满 10 年：<b>5 天/年</b> <sup class="ref">[1]</sup></li>' +
+      '<li>满 10 年不满 20 年：<b>10 天/年</b> <sup class="ref">[1]</sup></li>' +
+      '<li>满 20 年以上：<b>15 天/年</b> <sup class="ref">[1]</sup></li></ul>' +
+      '注意：试用期不享受年假，转正后按当年剩余日历天数折算，不足 1 天不计；年假最多结转 5 天 <sup class="ref">[1]</sup>。</div>' +
+      citeBlock(CITES.leave, true) +
+      '<details class="cite" style="margin-top:8px"><summary><span>检索详情（Top-5，评测与排障用）</span></summary><div class="snippet">' +
+      '<code>doc_a1b2c3_c003</code> ｜ 01_员工手册.pdf ｜ 第 3 页 ｜ 相似度 0.860 ｜ 重排 —<br/>' +
+      '<code>doc_g7h8i9_c005</code> ｜ 08_考勤与假期管理规定.txt ｜ 第 5 章 ｜ 相似度 0.712 ｜ 重排 —</div></details>' +
+      '<div class="meta">耗时 3.4s ｜ deepseek-chat ｜ trace_id <code>tr_20260928_000123</code></div>' +
+      '<div class="feedback"><button class="btn" data-fb="up">👍 有帮助</button><button class="btn" data-fb="down">👎 不准确</button></div>');
+  },
+  hotelAns: function(){
+    return userWrap('出差住宿标准是多少？') + assistantWrap(
+      badge('ok','已找到依据') +
+      '<div class="answer">出差住宿标准按城市级别执行（「差旅标准」工作表）：<ul>' +
+      '<li>一线城市：<b>500 元/晚</b> <sup class="ref">[1]</sup></li>' +
+      '<li>二线城市：<b>400 元/晚</b> <sup class="ref">[1]</sup></li>' +
+      '<li>其他城市：<b>300 元/晚</b> <sup class="ref">[1]</sup></li></ul>' +
+      '同表还规定了差旅餐补：一线 100 元/天，二线 80 元/天，其他城市 60 元/天 <sup class="ref">[1]</sup>。</div>' +
+      citeBlock(CITES.hotel, true) +
+      '<div class="meta">耗时 2.9s ｜ deepseek-chat ｜ trace_id <code>tr_20260928_000126</code></div>' +
+      '<div class="feedback"><button class="btn" data-fb="up">👍 有帮助</button><button class="btn" data-fb="down">👎 不准确</button></div>');
+  },
+  notfound: function(){
+    return userWrap('公司食堂几点开饭？') + assistantWrap(
+      badge('warn','未找到依据') +
+      '<div class="alert a-warn">未在知识库中找到相关依据，因此不作推测性回答。<br/>建议：换一种问法，或联系管理员补充相关文档后再试。</div>' +
+      citeBlock([], false) +
+      '<div class="meta">耗时 1.2s ｜ trace_id <code>tr_20260928_000124</code></div>');
+  },
+  clarify: function(){
+    return userWrap('住宿标准是多少？') + assistantWrap(
+      badge('info','需要补充信息') +
+      '<div class="alert a-info">知识库中存在多档住宿标准，需要你补充一个信息才能给出准确数值：你的出差城市属于哪一级？<ul>' +
+      '<li>一线城市：500 元/晚</li><li>二线城市：400 元/晚</li><li>其他城市：300 元/晚</li></ul>' +
+      '请回复城市名称或级别，我再给出适用标准。</div>' +
+      citeBlock(CITES.hotel, false));
+  },
+  demo: function(){
+    return '<div class="alert a-demo" style="margin:12px 0"><b>演示模式已开启</b>：回答来自预置数据（不是实时检索），用于答辩现场断网时演示完整流程。</div>' +
+      userWrap('出差住宿标准是多少？') + assistantWrap(
+      badge('ok','已找到依据') +
+      '<div class="answer">出差住宿标准按城市级别执行（「差旅标准」工作表）：<ul>' +
+      '<li>一线城市：<b>500 元/晚</b> <sup class="ref">[1]</sup></li>' +
+      '<li>二线城市：<b>400 元/晚</b> <sup class="ref">[1]</sup></li>' +
+      '<li>其他城市：<b>300 元/晚</b> <sup class="ref">[1]</sup></li></ul>' +
+      '同表还规定了差旅餐补：一线 100 元/天，二线 80 元/天，其他城市 60 元/天 <sup class="ref">[1]</sup>。</div>' +
+      citeBlock(CITES.hotel, true) +
+      '<div class="meta">耗时 2.9s ｜ deepseek-chat（演示数据） ｜ trace_id <code>tr_demo_000002</code></div>' +
+      '<div class="feedback"><button class="btn" data-fb="up">👍 有帮助</button><button class="btn" data-fb="down">👎 不准确</button></div>');
+  },
+  error: function(){
+    return userWrap('公司年假有多少天？') + assistantWrap(
+      '<div class="alert a-err"><b>无法连接后端服务</b><br/>后端服务似乎没有启动（或网络不通）。请确认后端已在 127.0.0.1:8000 运行；演示现场可打开左侧「演示模式」，用预置问答继续演示。</div>' +
+      '<div class="feedback"><button class="btn primary" data-fb="retry">重试这次提问</button></div>' +
+      '<div class="meta">排障编号（trace_id）：<code>tr_20260928_000125</code></div>');
+  }
+};
+
+function setState(name){
+  stream.innerHTML = STATES[name]();
+  document.querySelectorAll('.chip').forEach(function(c){ c.classList.toggle('active', c.dataset.state === name); });
+  document.getElementById('pill').classList.toggle('on', name === 'demo');
+  const conn = document.getElementById('conn');
+  conn.innerHTML = (name === 'error')
+    ? '<span class="status err">后端未连接</span>'
+    : '<span class="status ok">后端连接正常</span>';
+  stream.scrollTop = 0;
+}
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 1600);
+}
+
+document.querySelectorAll('.chip').forEach(function(chip){
+  chip.addEventListener('click', function(){ setState(chip.dataset.state); });
+});
+document.querySelectorAll('.tab').forEach(function(tab){
+  tab.addEventListener('click', function(){
+    document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+    tab.classList.add('active');
+    const isChat = tab.dataset.page === 'chat';
+    document.getElementById('viewChat').style.display = isChat ? 'flex' : 'none';
+    document.getElementById('viewKb').classList.toggle('hidden', isChat);
+    stateBar.style.display = isChat ? 'flex' : 'none';
+    document.getElementById('pageTitle').textContent = isChat ? '企业知识库智能问答' : '📚 知识库管理';
+    document.getElementById('pageSub').textContent = isChat
+      ? '上传公司文档后即可提问；答案会标注来源文件与页码 / 工作表 / 行号，点开引用即可核对原文。'
+      : '上传公司文档 → 系统自动解析、切片、建立索引 → 回到问答页即可带引用提问。';
+  });
+});
+
+document.addEventListener('click', function(e){
+  const ask = e.target.closest('[data-ask]');
+  if(ask){
+    const key = ask.dataset.ask;
+    stream.innerHTML = STATES[key === 'hotel' ? 'hotelAns' : 'answered']();
+    document.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('active'); });
+    toast('已发出提问：' + ask.textContent);
+    return;
+  }
+
+  const fb = e.target.closest('[data-fb]');
+  if(fb){
+    if(fb.dataset.fb === 'retry'){ setState('answered'); toast('正在重试这次提问…'); }
+    else { toast('感谢反馈，我们会持续改进！'); }
+    return;
+  }
+
+  const del = e.target.closest('[data-del]');
+  if(del){
+    const box = document.getElementById('delConfirm');
+    box.classList.remove('hidden');
+    box.innerHTML = '<div class="alert a-warn">确认删除《' + del.dataset.del + '》？删除后其向量将不可再被检索（US-10）。</div>' +
+      '<div class="row" style="margin-top:8px"><button class="btn primary" id="okDel">确认删除</button><button class="btn" id="cancelDel">取消</button></div>';
+    document.getElementById('okDel').onclick = function(){ box.classList.add('hidden'); toast('已删除《' + del.dataset.del + '》'); };
+    document.getElementById('cancelDel').onclick = function(){ box.classList.add('hidden'); };
+  }
+});
+
+// 知识库页：模拟一次上传结果（失败隔离）
+document.querySelector('#viewKb .btn.primary').addEventListener('click', function(){
+  document.getElementById('uploadResult').innerHTML =
+    '<div class="alert a-info">✅ 《01_员工手册.pdf》已入库，生成 96 个切片，耗时 2.1s<br/>' +
+    '❌ 《坏文件.pdf》处理失败：文件可能已损坏或不含可解析文本（其余文件不受影响）</div>';
+  toast('上传完成：1 个成功，1 个失败');
+});
+
+// 演示模式开关
+document.getElementById('pill').addEventListener('click', function(){
+  const on = !this.classList.contains('on');
+  setState(on ? 'demo' : 'empty');
+});
+
+setState('empty');
+</script>
+</body>
+</html>
