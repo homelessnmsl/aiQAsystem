@@ -40,6 +40,7 @@ class IngestResult:
     elapsed_ms: int
     warnings: List[str] = field(default_factory=list)
     created_at: str = ""
+    source_path: str = ""  # 来源文件路径（脚本同步 SQLite 台账用，W2-07）
 
 
 def ingest_file(
@@ -78,6 +79,7 @@ def ingest_file(
         elapsed_ms=elapsed_ms,
         warnings=list(parsed.warnings),
         created_at=created_at,
+        source_path=str(file_path),
     )
 
 def iter_supported_files(root: str | Path) -> List[Path]:

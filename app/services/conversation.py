@@ -15,6 +15,11 @@ def new_session_id() -> str:
     return f"conv_{datetime.now(CST):%Y%m%d}_{random_id_suffix()}"
 
 
+def new_message_id() -> str:
+    """生成消息 ID：msg_20261008_5e6f70（接口文档 1.5）"""
+    return f"msg_{datetime.now(CST):%Y%m%d}_{random_id_suffix()}"
+
+
 class ConversationStore:
     """内存版会话历史：{session_id: [{"role","content"}, ...]}（线程安全）"""
 

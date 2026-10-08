@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..core.config import settings
 from ..core.errors import CODE_INVALID_QUESTION, BizError
@@ -100,6 +100,63 @@ def retrieve(
 def knowledge_is_empty(store: Optional[VectorStore] = None) -> bool:
     """知识库是否为空：/api/ask 返回 2001 兜底用（FR-QA-04、接口文档 2.6）"""
     return (store or vector_store).is_empty()
+
+
+def retrieve_with_raw(
+    question: str,
+    *,
+    top_k: Optional[int] = None,
+    score_threshold: Optional[float] = None,
+    doc_ids: Optional[Sequence[str]] = None,
+    use_rerank: Optional[bool] = None,
+    provider: Optional[EmbeddingProvider] = None,
+    store: Optional[VectorStore] = None,
+    retrieve_k: Optional[int] = None,
+) -> Tuple[List[RetrievedChunk], List[RetrievedChunk]]:
+    """检索并同时返回原始明细（W2-07 DEV 扩展；retrieve 行为保持不变）
+
+    - raw：阈值过滤前的 Top-K 召回明细，用于 /api/ask 的 retrieved[]（PE 统计 M-01）；
+    - effective：阈值过滤（及重排）后的有效候选，用于生成与 citations（编号从 1 连续）。
+
+    与 retrieve() 的差异仅为额外返回 raw；检索参数与语义完全一致。
+    """
+    text = (question or "").strip()
+    if not text:
+        raise BizError(CODE_INVALID_QUESTION, "问题不能为空")
+
+    provider = provider or get_embedding_provider()
+    store = store or vector_store
+    started = time.perf_counter()
+
+    where = {"doc_id": {"$in": list(doc_ids)}} if doc_ids else None
+    hits = store.query(
+        provider.embed_query(text),
+        n_results=int(retrieve_k or settings.RETRIEVE_K),
+        where=where,
+    )
+
+    limit = max(1, int(top_k or settings.TOP_K))
+    raw = [_to_retrieved(index + 1, hit) for index, hit in enumerate(hits[:limit])]
+
+    threshold = settings.SCORE_THRESHOLD if score_threshold is None else float(score_threshold)
+    filtered = [hit for hit in hits if float(hit.get("score", 0.0)) >= threshold]
+
+    wants_rerank = settings.RERANK_ENABLED if use_rerank is None else bool(use_rerank)
+    if wants_rerank and filtered:
+        filtered = _try_rerank(text, filtered)
+
+    effective = [_to_retrieved(index + 1, hit) for index, hit in enumerate(filtered[:limit])]
+
+    logger.info(
+        "检索完成（raw/effective）：q=%r 原始 %d 条 / 有效 %d 条，耗时 %dms（threshold=%.2f, rerank=%s）",
+        text[:30],
+        len(raw),
+        len(effective),
+        int((time.perf_counter() - started) * 1000),
+        threshold,
+        wants_rerank,
+    )
+    return raw, effective
 
 
 def build_context(chunks: Sequence[RetrievedChunk], max_chars: Optional[int] = None) -> str:
