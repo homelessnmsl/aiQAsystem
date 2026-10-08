@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 from app.core.config import settings                  # noqa: E402
 from app.knowledge.store import vector_store          # noqa: E402
 from app.services.ingestion import ingest_paths       # noqa: E402
+from app.services.repository import get_repository    # noqa: E402
 
 
 def main() -> int:
@@ -36,7 +37,25 @@ def main() -> int:
     print(f"[重建] 来源目录：{target}")
     print(f"[重建] 集合：{vector_store.collection_name} @ {vector_store.path}（rebuild={args.rebuild}）")
 
+    repository = get_repository()
+    if args.rebuild:
+        deleted = repository.delete_all_documents()
+        print(f"[重建] 台账已同步清空（{deleted} 行）")
+
     results, failures = ingest_paths([target], rebuild=args.rebuild)
+
+    # 同步 SQLite 台账（与向量库保持一致，架构 6.6）
+    for result in results:
+        source = Path(result.source_path)
+        repository.upsert_document(
+            doc_id=result.doc_id,
+            filename=result.filename,
+            file_type=result.file_type,
+            size_bytes=source.stat().st_size if source.exists() else 0,
+            upload_time=result.created_at,
+            chunk_count=result.chunk_count,
+            status="success",
+        )
 
     for result in results:
         print(f"[成功] {result.filename} → {result.chunk_count} 个切片（{result.elapsed_ms}ms）")
@@ -45,7 +64,7 @@ def main() -> int:
 
     print(
         f"\n合计：成功 {len(results)} 个 / 失败 {len(failures)} 个，"
-        f"向量库现有 {vector_store.count()} 条"
+        f"向量库现有 {vector_store.count()} 条，台账现有 {repository.count_documents()} 个文档"
     )
     return 0 if results else 1
 
