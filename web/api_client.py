@@ -137,6 +137,12 @@ class ApiClient:
         data = payload.get("data")
         if code in (0, "0", None) and 200 <= http_status < 300:
             return data if isinstance(data, dict) else (data or {})
+        # 接口文档 1.4 的 message 列即"面向用户的 message"，后端已说清楚时不再叠加本地提示，
+        # 避免同一条限制（如 20MB / 支持格式）在界面上说两遍。
+        backend_message = (message or "").strip()
+        generic = backend_message.lower() in ("", "success", "error", "fail", "失败", "请求失败")
+        hint = _hint_for(code) if generic else ""
+
         details: List[str] = []
         if isinstance(data, dict):
             for item in data.get("errors", []) or []:
@@ -148,8 +154,8 @@ class ApiClient:
                     details.append(str(item))
         raise ApiError(
             code=code,
-            message=message or ERROR_HINTS.get(code, "请求失败"),
-            hint=_hint_for(code),
+            message=backend_message or ERROR_HINTS.get(code, "请求失败"),
+            hint=hint,
             trace_id=(data or {}).get("trace_id", "") if isinstance(data, dict) else "",
             http_status=http_status,
             details=details,

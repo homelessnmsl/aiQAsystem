@@ -92,11 +92,15 @@ def empty_chat_state(examples: Sequence[str] = ()) -> None:
 
 
 def not_found_notice(message: str = "") -> None:
-    """无依据兜底（US-08 / FR-QA-04）：中性语气 + 补救建议，绝不编造。"""
-    st.warning(
-        (message or "未在知识库中找到相关依据。")
-        + "\n\n建议：换一种问法，或联系管理员补充相关文档后再试。"
-    )
+    """无依据兜底（US-08 / FR-QA-04）：中性语气 + 补救建议，绝不编造。
+
+    后端（Prompt v1.1）通常已自带建议，此时不再重复追加，避免两段建议叠在一起。
+    """
+    text = message or "未在知识库中找到相关依据。"
+    already_advised = ("建议" in text) or ("联系管理员" in text) or ("换个说法" in text)
+    if not already_advised:
+        text += "\n\n建议：换一种问法，或联系管理员补充相关文档后再试。"
+    st.warning(text)
 
 
 def clarify_notice(message: str = "") -> None:
@@ -111,7 +115,12 @@ def error_notice(error: Any, retry_label: Optional[str] = "重试") -> bool:
     """错误态统一出口：只展示中文原因 + 建议，并给出重试入口。返回是否点了重试。"""
     if isinstance(error, ApiError):
         detail = "\n".join(f"- {d}" for d in getattr(error, "details", []))
-        st.error(f"**{error.message}**\n\n{error.hint or '请稍后重试。'}" + (f"\n\n{detail}" if detail else ""))
+        text = error.message
+        if error.hint:            # 后端已给出说明时 hint 为空，页面不再重复提示
+            text += f"\n\n{error.hint}"
+        if detail:
+            text += f"\n\n{detail}"
+        st.error(text)
         trace_id = error.trace_id
     else:
         st.error(f"**出了点问题**\n\n{error}")
