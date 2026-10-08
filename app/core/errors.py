@@ -97,6 +97,19 @@ def _reason_for(error: dict) -> str:
         return "max_tokens 必须在 1~4096 之间"
     if field == "session_id":
         return "session_id 不合法"
+    if field == "question":
+        if etype in ("missing", "string_too_short"):
+            return "问题不能为空"
+        if etype == "string_too_long":
+            return "问题过长，请精简到 500 字以内"
+    if field == "top_k":
+        return "top_k 必须在 1~10 之间"
+    if field == "score_threshold":
+        return "score_threshold 必须在 0~1 之间"
+    if field == "page":
+        return "page 必须 ≥1"
+    if field == "page_size":
+        return "page_size 必须在 1~100 之间"
     return str(error.get("msg", "参数不合法"))
 
 
@@ -117,6 +130,12 @@ def register_exception_handlers(app: FastAPI) -> None:
             {"field": str(e.get("loc", ("body",))[-1]), "reason": _reason_for(e)}
             for e in exc.errors()
         ]
+        if errors and errors[0]["field"] == "question":
+            # /api/ask：空 / 超长问题按接口文档 1.4 返回 1004（问题不合法）
+            return JSONResponse(
+                status_code=400,
+                content=ApiResponse.fail(CODE_INVALID_QUESTION, errors[0]["reason"], {"errors": errors}),
+            )
         return JSONResponse(
             status_code=400,
             content=ApiResponse.fail(CODE_VALIDATION_FAILED, "参数校验失败", {"errors": errors}),
