@@ -62,6 +62,13 @@ port = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 from api_client import ApiClient, ApiError
+
+# 控制台可能是 GBK（Windows 默认），统一按 UTF-8 输出，避免自测脚本刷屏报编码错误
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:  # noqa: BLE001 - 某些终端不支持 reconfigure
+        pass
 c = ApiClient(f"http://127.0.0.1:{port}")
 ok = []
 def chk(name, cond, extra=""):

@@ -2,7 +2,7 @@
 
 作用：用 Streamlit 官方测试运行器（AppTest）真实执行页面脚本，
 逐项检查「空态 / 错误态 / 演示模式 / 引用折叠 / 兜底态」是否按设计渲染，
-全程**不需要启动后端**（后端未就绪正是第1周的默认状态）。
+全程**不需要启动后端**，且与本机后端是否在运行无关（脚本把接口地址固定到一个空闲端口）。
 
 运行（在仓库根目录）：
     python web/selftest.py
@@ -12,13 +12,25 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import warnings
 from pathlib import Path
 
+# 控制台可能是 GBK（Windows 默认），统一按 UTF-8 输出，避免自测脚本刷屏报编码错误
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:  # noqa: BLE001 - 某些终端不支持 reconfigure
+        pass
+
 WEB_DIR = Path(__file__).resolve().parent
 REPO_ROOT = WEB_DIR.parent
 sys.path.insert(0, str(WEB_DIR))
+
+# 自测必须是"离线可跑"的：固定指向一个不会有人使用的端口，
+# 这样无论本机后端是否在运行，错误态/降级路径的断言都稳定（W2 联调时发现的问题）。
+os.environ["WEB_API_BASE"] = "http://127.0.0.1:9"
 
 warnings.filterwarnings("ignore")
 
