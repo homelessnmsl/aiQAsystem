@@ -34,3 +34,5 @@ data/logs/*
 !data/logs/.gitkeep
 data/*.db
 data/*.sqlite3
+data/eval/*
+!data/eval/.gitkeep
