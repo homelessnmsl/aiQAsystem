@@ -21,8 +21,8 @@ httpx==0.28.1                     # 异步 HTTP（健康检查、评测脚本）
 requests==2.32.3                  # Streamlit 前端调用后端接口
 
 # ---------- RAG：向量库 / 切片 / Embedding / Rerank（第2~3周，AD/DEV） ----------
-numpy==1.26.4                     # 固定 1.26.x，规避 chromadb 0.5.x 与 numpy 2.x 的兼容问题
-chromadb==0.5.23                  # 向量库（PersistentClient 本地持久化）
+numpy==2.5.3                      # 2026-10-08 实测环境（chromadb 1.5.9 兼容）
+chromadb==1.5.9                   # 向量库（PersistentClient 本地持久化；1.x API 已实测通过）
 langchain-text-splitters==0.3.4   # RecursiveCharacterTextSplitter 中文切片
 sentence-transformers==3.3.1      # 本地 Embedding（bge-small-zh）与 Rerank（bge-reranker-base）
 
