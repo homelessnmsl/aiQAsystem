@@ -10,7 +10,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 python-multipart==0.0.20          # multipart/form-data 文件上传解析
-pydantic==2.10.4
+pydantic==2.13.5
 pydantic-settings==2.7.0          # 读取 .env 生成 Settings
 python-dotenv==1.0.1              # .env 读取（课程代码 day01~day05 显式依赖）
 email-validator==2.2.0            # Pydantic EmailStr 邮箱校验（day01 作业1）
