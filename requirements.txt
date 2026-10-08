@@ -39,3 +39,7 @@ pandas==2.2.3
 # ---------- 测试与质量（第1~3周，DEV/PE） ----------
 pytest==8.3.4
 pytest-asyncio==0.25.0
+
+# ---------- 兼容性锁定（2026-10-08 修复：protobuf 版本冲突导致 chromadb 无法导入） ----------
+protobuf==5.29.3                  # streamlit 1.41 要求 protobuf<6
+googleapis-common-protos==1.66.0  # 须与 protobuf 5.29 运行时匹配（1.75+ 按 6.x 生成，会触发 VersionError）
