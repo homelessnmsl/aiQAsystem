@@ -44,6 +44,12 @@ def test_health(client):
     assert set(deps) == {"llm", "embedding", "vector_store", "sqlite"}
     assert deps["llm"]["status"] in ("ok", "unconfigured")
     assert deps["llm"]["model"] == "deepseek-chat"
+    assert deps["embedding"]["status"] in ("ok", "error", "unconfigured")
+    assert deps["vector_store"]["status"] in ("ok", "error")
+    assert deps["sqlite"]["status"] in ("ok", "error")
+    if deps["vector_store"]["status"] == "ok":
+        assert isinstance(deps["vector_store"]["chunk_count"], int)
+        assert deps["vector_store"]["collection"] == "enterprise_kb"
 
 
 def test_404_unified(client):
