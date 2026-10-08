@@ -94,3 +94,20 @@ def test_rerank_flag_is_safe_before_week3(store: VectorStore, provider: FakeEmbe
     _add(store, provider, "01_员工手册.pdf", 3, "年假：每年 5 天。", "doc_20261008_000004")
     chunks = retrieve("年假", provider=provider, store=store, use_rerank=True, score_threshold=0.5)
     assert chunks, "跳过重排后仍应有召回结果"
+
+def test_retrieve_uses_rerank_hook_when_enabled(store: VectorStore, provider: FakeEmbedding, monkeypatch):
+    """use_rerank=True 时调用 reranker.rerank（第3周钩子），并采用其排序与 rerank_score"""
+    _add(store, provider, "01_员工手册.pdf", 3, "年假：每年 5 天。", "doc_20261008_000005")
+    calls = {}
+
+    def fake_rerank(question, hits, top_k=None):
+        calls["used"] = True
+        return [dict(item, rerank_score=0.9 - index * 0.1) for index, item in enumerate(hits)]
+
+    import app.services.reranker as reranker_module
+
+    monkeypatch.setattr(reranker_module, "rerank", fake_rerank)
+
+    chunks = retrieve("年假", provider=provider, store=store, use_rerank=True, score_threshold=0.5)
+    assert chunks and calls.get("used")
+    assert chunks[0].rerank_score is not None

@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 80
     MIN_CHUNK_CHARS: int = 80
     CHUNK_MERGE_TARGET: int = 300   # 短块合并目标长度（架构 6.4：向 300~600 字靠拢）
+    CHUNK_MERGE_CROSS_SECTION: bool = True   # 是否允许跨章节合并（第3周 A/B：false 保留小节级精准切片）
     EXCEL_ROWS_PER_CHUNK: int = 20
 
     # ---------- 存储路径（架构 9.5） ----------

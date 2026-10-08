@@ -110,12 +110,24 @@ def _cover_blocks(piece_start: int, piece_end: int, blocks: Sequence[Block], sta
     return covered
 
 
+def _covered_sections(covered: Sequence[Block]) -> str:
+    """切片覆盖的章节列表（去重、保序、截断 300 字）——多章节合并时供引用核验/评测"""
+    names: List[str] = []
+    for block in covered:
+        if block.section and block.section not in names:
+            names.append(block.section)
+    return "｜".join(names)[:300]
+
+
 def _position_meta(covered: Sequence[Block]) -> Dict[str, Any]:
     """从覆盖的 Block 中提炼位置元数据（架构 6.5）"""
     if not covered:
         return {}
     first = covered[0]
     meta: Dict[str, Any] = {}
+    sections = _covered_sections(covered)
+    if sections.count("｜") >= 1:
+        meta["sections"] = sections
     if first.page_no is not None:
         meta["page_no"] = int(first.page_no)
     if first.sheet_name:
@@ -207,6 +219,10 @@ def _merge_short_chunks(chunks: List[Chunk]) -> List[Chunk]:
             previous = merged[-1]
             same_page = previous.metadata.get("page_no") == chunk.metadata.get("page_no")
             same_sheet = previous.metadata.get("sheet_name") == chunk.metadata.get("sheet_name")
+            cross_ok = (
+                settings.CHUNK_MERGE_CROSS_SECTION
+                or previous.metadata.get("section") == chunk.metadata.get("section")
+            )
             combined_length = len(previous.content) + len(chunk.content)
             previous_span = _row_span(previous.metadata)
             current_span = _row_span(chunk.metadata)
@@ -219,6 +235,7 @@ def _merge_short_chunks(chunks: List[Chunk]) -> List[Chunk]:
                 len(previous.content) < merge_target
                 and same_page
                 and same_sheet
+                and cross_ok
                 and combined_length <= settings.CHUNK_SIZE
                 and rows_ok
             ):
@@ -229,6 +246,14 @@ def _merge_short_chunks(chunks: List[Chunk]) -> List[Chunk]:
                 new_section = chunk.metadata.get("section")
                 if new_section and new_section != previous.metadata.get("section"):
                     previous.metadata["section_end"] = new_section
+                extra_sections = chunk.metadata.get("sections") or new_section
+                if extra_sections:
+                    merged_sections = "｜".join(
+                        dict.fromkeys((previous.metadata.get("sections") or previous.metadata.get("section") or "").split("｜")
+                                      + str(extra_sections).split("｜"))
+                    ).strip("｜")
+                    if merged_sections and "｜" in merged_sections:
+                        previous.metadata["sections"] = merged_sections[:300]
                 continue
         merged.append(chunk)
     for index, chunk in enumerate(merged):

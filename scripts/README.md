@@ -4,6 +4,7 @@
 | :--- | :--- | :--- | :--- |
 | `init_kb.py` | 批量导入文档建库（默认 `tests/sample_docs/`，支持 `--rebuild`） | AD | ✅ 第2周（10-08 实测 10/10 入库） |
 | `query_kb.py` | 命令行检索自测（top-k + 阈值 + 上下文预览） | AD | ✅ 第2周 |
+| `eval_retrieval.py` | 检索 A/B 对比（向量 vs Rerank：Recall@5 / Top-1 来源 / 位置覆盖 / 时延 / 越界体检） | AD | ✅ 第3周预研（10-08 出对比数据） |
 | `build_kb.py` | 重建向量库（`--rebuild` 清空后扫描 `data/uploads/` 全量重导入） | AD | ✅ 第2周 |
 | `download_model.py` | 从 ModelScope（魔搭）下载 Embedding 模型到本地（应对 HF 不可达） | AD | ✅ 第2周 |
 | `eval_rag.py` | 跑 20 条评测集，输出 M-01~M-04 与逐条明细 | PE | 第2~3周（W2-10） |
