@@ -88,6 +88,29 @@ class CourseLLM:
             yield ch
 
 
+class ScriptedChatLLM(FakeLLM):
+    """按脚本依次回复的假模型（多轮改写场景：改写与生成共用一个客户端）
+
+    脚本元素为字符串（正常回复）或 Exception 实例（抛出）。
+    """
+
+    def __init__(self, replies):
+        super().__init__()
+        self.replies = list(replies)
+
+    def chat(self, messages, temperature=None, max_tokens=None, **kwargs):
+        self.calls.append({
+            "method": "chat",
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        })
+        reply = self.replies.pop(0) if self.replies else "（脚本已用尽）"
+        if isinstance(reply, Exception):
+            raise reply
+        return self._LLMResult(content=reply, model="deepseek-chat", usage=self._UsageInfo(1, 2, 3))
+
+
 class ScriptedLLM:
     """按脚本依次返回响应的假模型（用于 Function Calling 链路测试）"""
 
@@ -95,6 +118,7 @@ class ScriptedLLM:
         self._responses = list(responses)
         self.reply = "这是离线测试回复。"
         self.chat_with_tools_calls = []
+        self.stream_chat_calls = []
 
     def chat_with_tools(self, messages, tools=None, **kwargs):
         self.chat_with_tools_calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
@@ -103,5 +127,6 @@ class ScriptedLLM:
         return FakeResponse(content="(脚本已用尽)")
 
     def stream_chat(self, messages, **kwargs):
+        self.stream_chat_calls.append({"messages": list(messages), "kwargs": kwargs})
         for ch in self.reply:
             yield ch

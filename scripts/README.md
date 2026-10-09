@@ -7,9 +7,11 @@
 | `eval_retrieval.py` | 检索 A/B 对比（向量 vs Rerank：Recall@5 / Top-1 来源 / 位置覆盖 / 时延 / 越界体检） | AD | ✅ 第3周预研（10-08 出对比数据） |
 | `build_kb.py` | 重建向量库（`--rebuild` 清空后扫描 `data/uploads/` 全量重导入） | AD | ✅ 第2周 |
 | `download_model.py` | 从 ModelScope（魔搭）下载 Embedding 模型到本地（应对 HF 不可达） | AD | ✅ 第2周 |
-| `eval_rag.py` | 跑 20 条评测集（M-01~M-04；`--mode retrieval/offline/api`），输出逐条明细与报告草稿 | PE | ✅ 第2周（10-08 首轮：M-01 100%、M-02 100%、M-03 93.3%、M-04 100%，见 `docs/评测报告_v1.md`） |
+| `eval_rag.py` | 评测 M-01~M-04：`--mode retrieval/offline/api`、`--dataset`（单轮/多轮）、`--rewrite none/llm`、`--history-style text/messages`（W3-08 A/B），输出逐条明细与报告草稿 | PE | ✅ 第3周（10-09 多轮四配置 A/B，见 `docs/多轮评测与A-B数据.md`） |
 | `check_qa_dataset.py` | 评测集格式校验（PE 交付） | PE | ✅ 第1周 |
 | `run_all.py` | 一键启动前后端（演示与 M-07 首次可用时间） | DEV | 第2周（W2-08 联调期） |
+
+> ⚠️ **Chroma 并发提示**：后端运行期间，不要用离线脚本（`--mode offline/retrieval`）直连同一个 `data/chroma` —— Chroma 持久目录不支持多进程并发，会导致后端句柄失效（`/api/health` 降级、`/api/ask` 返回 2003）。评测与后端请二选一，或评测后重启后端。
 
 常用命令（仓库根目录）：
 ```bash
@@ -24,3 +26,4 @@ python scripts/download_model.py                       # 首次使用本地模�
 - `issues_batch.json`：35 条 Issue 数据（第1周18 + 第2周17），由周任务清单生成
 - `upload_issues.py`：幂等上传（按标题判重）；`--dry-run` 预演；令牌经 `--token` / `GITEE_TOKEN` 环境变量 / 仓库根 `.gitee_token` 文件提供（该文件已被 .gitignore 忽略）
 - 用法：`python scripts/upload_issues.py --dry-run`；真实上传：`python scripts/upload_issues.py --token <私人令牌>`
+- `sync_issue_states.py`：按 `issues_batch.json` 的 status 同步 Gitee Issue 状态（✅→已完成，其余保持打开）；`--dry-run` 预演，幂等可复跑

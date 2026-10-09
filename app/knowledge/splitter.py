@@ -12,7 +12,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -30,11 +31,15 @@ SEPARATORS: Sequence[str] = ["\n\n", "\n", "。", "！", "？", "；", "，", " 
 
 @dataclass
 class Chunk:
-    """写入向量库的最小单位（content 与 Chroma 兼容 metadata）"""
+    """写入向量库的最小单位（content 与 Chroma 兼容 metadata）
+
+    spans：多小节切片的各小节字符区间 [{title, start, end}]（W3-03 引用细化用）
+    """
 
     chunk_id: str
     content: str
     metadata: Dict[str, Any]
+    spans: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -95,35 +100,37 @@ def _piece_offsets(text: str, pieces: Sequence[str]) -> List[Tuple[str, int]]:
     return result
 
 
-def _cover_blocks(piece_start: int, piece_end: int, blocks: Sequence[Block], starts: Sequence[int]) -> List[Block]:
-    """找出与片段字符区间重叠的 Block（用于提取页码/工作表/章节/行号）"""
-    covered: List[Block] = []
+def _cover_blocks(
+    piece_start: int, piece_end: int, blocks: Sequence[Block], starts: Sequence[int]
+) -> List[Tuple[Block, int]]:
+    """找出与片段字符区间重叠的 Block 及其起始偏移（用于位置元数据与小节区间）"""
+    covered: List[Tuple[Block, int]] = []
     for block, start in zip(blocks, starts):
         end = start + len(block.text)
         if end <= piece_start:
             continue
         if start >= piece_end:
             break
-        covered.append(block)
+        covered.append((block, start))
     if not covered and blocks:
-        covered = [blocks[0]]
+        covered = [(blocks[0], starts[0])]
     return covered
 
 
-def _covered_sections(covered: Sequence[Block]) -> str:
+def _covered_sections(covered: Sequence[Tuple[Block, int]]) -> str:
     """切片覆盖的章节列表（去重、保序、截断 300 字）——多章节合并时供引用核验/评测"""
     names: List[str] = []
-    for block in covered:
+    for block, _start in covered:
         if block.section and block.section not in names:
             names.append(block.section)
     return "｜".join(names)[:300]
 
 
-def _position_meta(covered: Sequence[Block]) -> Dict[str, Any]:
+def _position_meta(covered: Sequence[Tuple[Block, int]]) -> Dict[str, Any]:
     """从覆盖的 Block 中提炼位置元数据（架构 6.5）"""
     if not covered:
         return {}
-    first = covered[0]
+    first = covered[0][0]
     meta: Dict[str, Any] = {}
     sections = _covered_sections(covered)
     if sections.count("｜") >= 1:
@@ -134,13 +141,53 @@ def _position_meta(covered: Sequence[Block]) -> Dict[str, Any]:
         meta["sheet_name"] = str(first.sheet_name)
     if first.section:
         meta["section"] = str(first.section)
-    row_starts = [b.row_start for b in covered if b.row_start is not None]
-    row_ends = [b.row_end for b in covered if b.row_end is not None]
+    row_starts = [block.row_start for block, _start in covered if block.row_start is not None]
+    row_ends = [block.row_end for block, _start in covered if block.row_end is not None]
     if row_starts:
         meta["row_start"] = int(min(row_starts))
     if row_ends:
         meta["row_end"] = int(max(row_ends))
     return meta
+
+
+#: section_spans 元数据体积上限（Chroma 元数据为字符串，控制长度）
+SECTION_SPANS_MAX_CHARS = 900
+
+
+def _build_spans(covered: Sequence[Tuple[Block, int]], piece_start: int, piece_end: int) -> List[Dict[str, Any]]:
+    """记录片段内各小节的字符区间 [{title, start, end}]（W3-03 引用细化）
+
+    同一小节的连续 Block 会合并为一段；无标题的 Block 沿用上一小节标题（首段记为「正文」）。
+    """
+    spans: List[Dict[str, Any]] = []
+    last_title: Optional[str] = None
+    for block, start in covered:
+        span_start = max(start, piece_start) - piece_start
+        span_end = min(start + len(block.text), piece_end) - piece_start
+        if span_end <= span_start:
+            continue
+        title = block.section or last_title or "正文"
+        last_title = title
+        if spans and spans[-1]["title"] == title:
+            spans[-1]["end"] = span_end
+        else:
+            spans.append({"title": title, "start": span_start, "end": span_end})
+    return spans
+
+
+def _attach_section_spans(chunk: Chunk) -> None:
+    """多小节切片写入 section_spans 元数据（单小节无需记录；超长截断保留前若干节）"""
+    if len({span["title"] for span in chunk.spans}) < 2:
+        return
+    payload: List[Dict[str, Any]] = []
+    for span in chunk.spans:
+        payload.append(span)
+        if len(json.dumps(payload, ensure_ascii=False)) > SECTION_SPANS_MAX_CHARS:
+            payload.pop()
+            break
+    if len({span["title"] for span in payload}) < 2:
+        return
+    chunk.metadata["section_spans"] = json.dumps(payload, ensure_ascii=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -171,6 +218,7 @@ def split_document(parsed: ParsedDocument, doc_id: str, created_at: Optional[str
             if not piece:
                 continue
             covered = _cover_blocks(offset, offset + len(piece), group, starts)
+            spans = _build_spans(covered, offset, offset + len(piece))
             metadata: Dict[str, Any] = {
                 "doc_id": doc_id,
                 "filename": parsed.filename,
@@ -181,9 +229,18 @@ def split_document(parsed: ParsedDocument, doc_id: str, created_at: Optional[str
                 "created_at": created,
             }
             metadata.update(_position_meta(covered))
-            raw_chunks.append(Chunk(chunk_id=chunk_id_of(doc_id, len(raw_chunks)), content=piece, metadata=metadata))
+            raw_chunks.append(
+                Chunk(
+                    chunk_id=chunk_id_of(doc_id, len(raw_chunks)),
+                    content=piece,
+                    metadata=metadata,
+                    spans=spans,
+                )
+            )
 
     chunks = _merge_short_chunks(raw_chunks)
+    for chunk in chunks:
+        _attach_section_spans(chunk)
     logger.info(
         "切片完成：%s（%s）→ %d 个 chunk，平均 %d 字",
         parsed.filename,
@@ -239,7 +296,12 @@ def _merge_short_chunks(chunks: List[Chunk]) -> List[Chunk]:
                 and combined_length <= settings.CHUNK_SIZE
                 and rows_ok
             ):
+                shift = len(previous.content) + 1  # +1 为拼接的换行符
                 previous.content = f"{previous.content}\n{chunk.content}"
+                previous.spans = previous.spans + [
+                    {"title": span["title"], "start": span["start"] + shift, "end": span["end"] + shift}
+                    for span in chunk.spans
+                ]
                 previous.metadata["char_count"] = len(previous.content)
                 if previous_span is not None and current_span is not None:
                     previous.metadata["row_end"] = chunk.metadata.get("row_end")

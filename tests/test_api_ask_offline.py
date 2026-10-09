@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 import app.main as app_main
 from app.services.repository import Repository
 from app.services.retrieval import RetrievedChunk
-from fakes import FakeLLM
+from fakes import FakeLLM, ScriptedChatLLM
 
 
 @pytest.fixture()
@@ -170,11 +170,96 @@ def test_ask_invalid_params(client, temp_repo, monkeypatch):
     assert resp.status_code == 400 and resp.json()["data"]["errors"][0]["field"] == "score_threshold"
 
 
-def test_ask_stream_not_supported(client, temp_repo, monkeypatch):
+# ============ W3-07：流式问答 SSE（接口文档 2.11） ============
+def _parse_sse(text: str) -> list:
+    return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
+
+
+def test_ask_stream_sequence(client, temp_repo, monkeypatch):
+    """事件序列：retrieval → delta* → done（最后一条）；citations 为前置全集"""
+    first = _chunk(rank=1, score=0.72)
+    second = _chunk(rank=2, score=0.68, doc_id="doc_2", source="08_考勤与假期管理规定.txt", location="第 12~18 行")
+    _patch_retrieval(monkeypatch, raw=[first, second], effective=[first, second])
+    fake = _patch_llm(monkeypatch, reply="年假满 1 年 5 天 [1]，折算规则见考勤规定 [2]。")
+
+    resp = client.post("/api/ask", json={"question": "年假多少天？", "stream": True})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    events = _parse_sse(resp.text)
+
+    assert events[0]["type"] == "retrieval"
+    assert events[0]["trace_id"].startswith("tr_")
+    assert events[0]["session_id"].startswith("conv_")
+    assert events[0]["message_id"].startswith("msg_")
+    assert len(events[0]["citations"]) == 2 and len(events[0]["retrieved"]) == 2
+
+    assert events[-1]["type"] == "done"
+    assert set(events[-1]["latency_ms"]) == {"total", "retrieval", "rerank", "generation"}
+    deltas = events[1:-1]
+    assert deltas and all(event["type"] == "delta" for event in deltas)
+    assert "".join(event["content"] for event in deltas) == "年假满 1 年 5 天 [1]，折算规则见考勤规定 [2]。"
+
+    # 流式路径走 stream_chat；落库与下发一致
+    assert fake.calls[0]["method"] == "stream_chat"
+    messages = temp_repo.list_messages(events[0]["session_id"])
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[1]["content"] == "年假满 1 年 5 天 [1]，折算规则见考勤规定 [2]。"
+    assert len(json.loads(messages[1]["citations"])) == 2
+
+
+def test_ask_stream_not_found(client, temp_repo, monkeypatch):
+    """无有效候选：retrieval → 兜底 delta → done（不调用 LLM，usage=null）"""
+    low = _chunk(rank=1, score=0.28, doc_id="doc_9", source="10_公司简介.md", location="章节「2 组织架构」")
+    _patch_retrieval(monkeypatch, raw=[low], effective=[])
+    fake = _patch_llm(monkeypatch)
+
+    resp = client.post("/api/ask", json={"question": "公司食堂几点开饭？", "stream": True})
+    events = _parse_sse(resp.text)
+    assert [event["type"] for event in events] == ["retrieval", "delta", "done"]
+    assert events[1]["content"].startswith("抱歉，未在企业知识库中找到相关依据")
+    assert events[2]["usage"] is None
+    assert events[2]["latency_ms"]["generation"] == 0
+    assert fake.calls == []
+    messages = temp_repo.list_messages(events[0]["session_id"])
+    assert messages[1]["content"] == events[1]["content"]
+
+
+def test_ask_stream_precheck_json_errors(client, temp_repo, monkeypatch):
+    """准备阶段失败：按统一 JSON 错误返回（不进入 SSE）"""
+    monkeypatch.setattr("app.services.rag.knowledge_is_empty", lambda store=None: True)
     resp = client.post("/api/ask", json={"question": "年假？", "stream": True})
-    assert resp.status_code == 400
-    assert resp.json()["code"] == 1001
-    assert "第3周" in resp.json()["message"]
+    assert resp.status_code == 409
+    assert resp.json()["code"] == 2001
+    assert resp.headers["content-type"].startswith("application/json")
+
+    monkeypatch.setattr("app.services.rag.knowledge_is_empty", lambda store=None: False)
+    good = _chunk(rank=1, score=0.72)
+    _patch_retrieval(monkeypatch, raw=[good], effective=[good])
+    monkeypatch.setattr(app_main.settings, "DEEPSEEK_API_KEY", "")
+    resp = client.post("/api/ask", json={"question": "年假？", "stream": True})
+    assert resp.status_code == 500 and resp.json()["code"] == 3003
+
+
+def test_ask_stream_generation_error_event(client, temp_repo, monkeypatch):
+    """生成中异常：error 收尾且为最后一条事件；不落库"""
+    from app.core.errors import CODE_LLM_TIMEOUT, BizError as BizErrorCls
+
+    good = _chunk(rank=1, score=0.72)
+    _patch_retrieval(monkeypatch, raw=[good], effective=[good])
+
+    class _FailingStreamLLM:
+        def stream_chat(self, messages, **kwargs):
+            raise BizErrorCls(CODE_LLM_TIMEOUT, "回答生成超时，请稍后重试")
+            yield  # pragma: no cover - 生成器形式，抛错发生在迭代时
+
+    monkeypatch.setattr("app.services.rag.get_llm_client", lambda: _FailingStreamLLM())
+    monkeypatch.setattr(app_main.settings, "DEEPSEEK_API_KEY", "sk-test-offline")
+
+    resp = client.post("/api/ask", json={"question": "年假多少天？", "stream": True})
+    events = _parse_sse(resp.text)
+    assert [event["type"] for event in events] == ["retrieval", "error"]
+    assert events[-1]["code"] == 3001
+    assert temp_repo.list_messages(events[0]["session_id"]) == []
 
 
 def test_ask_strips_out_of_range_marks(client, temp_repo, monkeypatch):
@@ -183,3 +268,101 @@ def test_ask_strips_out_of_range_marks(client, temp_repo, monkeypatch):
     _patch_llm(monkeypatch, reply="年假 5 天 [1]，详情见 [3] 号文件。")
     body = client.post("/api/ask", json={"question": "年假多少天？"}).json()
     assert body["data"]["answer"] == "年假 5 天 [1]，详情见  号文件。"
+
+
+def test_ask_citations_renumbered_continuous(client, temp_repo, monkeypatch):
+    """D2-02 方案B：模型引用 [1][3]（不连续）→ 对外答案与 citations 重排为连续 [1][2]。"""
+    c1 = _chunk(rank=1, score=0.72, doc_id="doc_1", source="01_员工手册.pdf", location="第 3 页",
+                content="年假：满 1 年不满 10 年每年 5 天。")
+    c2 = _chunk(rank=2, score=0.61, doc_id="doc_3", source="03_报销制度.xlsx", location="工作表「差旅标准」第 2~4 行",
+                content="出差住宿标准：一线城市 400 元/晚。")
+    c3 = _chunk(rank=3, score=0.55, doc_id="doc_3", source="03_报销制度.xlsx", location="工作表「差旅标准」第 5~8 行",
+                content="出差餐补：100 元/天。")
+    _patch_retrieval(monkeypatch, raw=[c1, c2, c3], effective=[c1, c2, c3])
+    _patch_llm(monkeypatch, reply="年假每年 5 天 [1]；出差住宿一线城市 400 元/晚 [3]。")
+
+    resp = client.post("/api/ask", json={"question": "年假和出差住宿标准各是多少？"})
+    body = resp.json()
+    data = body["data"]
+
+    assert data["answer_type"] == "answered"
+    # 答案编号连续化：[1][3] → [1][2]
+    assert "[1]" in data["answer"] and "[2]" in data["answer"] and "[3]" not in data["answer"]
+    # citations 同步重排：2 条、编号 1/2、溯源字段保留原值
+    assert [c["index"] for c in data["citations"]] == [1, 2]
+    assert data["citations"][0]["source_file"] == "01_员工手册.pdf"
+    assert data["citations"][1]["chunk_id"] == "doc_3:2"
+    assert data["citations"][1]["location"] == "工作表「差旅标准」第 5~8 行"
+# ============ 多轮改写（架构 8.2 ①、FR-QA-05） ============
+def test_multiturn_rewrite_applied(client, temp_repo, monkeypatch):
+    """有历史时先改写问题，再用改写后的问题检索；无历史不改写"""
+    from app.services.conversation import conversation_store
+
+    good = _chunk(rank=1, score=0.72)
+    seen = {}
+
+    def fake_retrieve(question, **kwargs):
+        seen["question"] = question
+        return [good], [good]
+
+    monkeypatch.setattr("app.services.rag.retrieve_with_raw", fake_retrieve)
+    monkeypatch.setattr("app.services.rag.knowledge_is_empty", lambda store=None: False)
+    scripted = ScriptedChatLLM([
+        "试用期为 3 个月 [1]。",
+        "转正后的年假天数是多少？",
+        "转正后当年度年假按剩余天数折算 [1]。",
+    ])
+    monkeypatch.setattr("app.services.rag.get_llm_client", lambda: scripted)
+    monkeypatch.setattr(app_main.settings, "DEEPSEEK_API_KEY", "sk-test-offline")
+
+    session_id = "conv_pytest_multiturn"
+    conversation_store.clear(session_id)
+
+    first = client.post("/api/ask", json={"question": "试用期有多久？", "session_id": session_id}).json()
+    assert first["data"]["answer_type"] == "answered"
+    assert first["data"]["rewritten_question"] is None  # 无历史 → 不改写
+    assert seen["question"] == "试用期有多久？"
+    assert len(scripted.calls) == 1  # 只有生成调用
+
+    second = client.post("/api/ask", json={"question": "那转正后呢？", "session_id": session_id}).json()
+    assert second["data"]["rewritten_question"] == "转正后的年假天数是多少？"
+    assert seen["question"] == "转正后的年假天数是多少？"  # 检索用的是改写后的问题
+    assert len(scripted.calls) == 3  # 第一轮生成 + 第二轮改写 + 第二轮生成
+
+    # 第二轮 Prompt 中携带历史（用户/助手 文本注入）
+    second_prompt = scripted.calls[2]["messages"][1]["content"]
+    assert "用户：试用期有多久？" in second_prompt
+    assert "助手：试用期为 3 个月 [1]。" in second_prompt
+
+
+def test_multiturn_rewrite_failure_falls_back(client, temp_repo, monkeypatch):
+    """改写调用失败时降级为原文检索，主链路不受影响（异常兜底）"""
+    from app.core.errors import CODE_LLM_TIMEOUT, BizError
+    from app.services.conversation import conversation_store
+
+    good = _chunk(rank=1, score=0.72)
+    seen = {}
+
+    def fake_retrieve(question, **kwargs):
+        seen["question"] = question
+        return [good], [good]
+
+    monkeypatch.setattr("app.services.rag.retrieve_with_raw", fake_retrieve)
+    monkeypatch.setattr("app.services.rag.knowledge_is_empty", lambda store=None: False)
+    scripted = ScriptedChatLLM([
+        "试用期为 3 个月 [1]。",
+        BizError(CODE_LLM_TIMEOUT, "回答生成超时，请稍后重试"),
+        "转正后年假按比例折算 [1]。",
+    ])
+    monkeypatch.setattr("app.services.rag.get_llm_client", lambda: scripted)
+    monkeypatch.setattr(app_main.settings, "DEEPSEEK_API_KEY", "sk-test-offline")
+
+    session_id = "conv_pytest_rewrite_fallback"
+    conversation_store.clear(session_id)
+    client.post("/api/ask", json={"question": "试用期有多久？", "session_id": session_id})
+
+    second = client.post("/api/ask", json={"question": "那之后呢？", "session_id": session_id}).json()
+    assert second["code"] == 0
+    assert second["data"]["answer_type"] == "answered"
+    assert second["data"]["rewritten_question"] is None  # 改写失败 → 未改写
+    assert seen["question"] == "那之后呢？"  # 降级用原文检索

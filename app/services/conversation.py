@@ -20,6 +20,11 @@ def new_message_id() -> str:
     return f"msg_{datetime.now(CST):%Y%m%d}_{random_id_suffix()}"
 
 
+def new_feedback_id() -> str:
+    """生成反馈 ID：fb_20261008_0c1d2e（接口文档 2.7 响应示例）"""
+    return f"fb_{datetime.now(CST):%Y%m%d}_{random_id_suffix()}"
+
+
 class ConversationStore:
     """内存版会话历史：{session_id: [{"role","content"}, ...]}（线程安全）"""
 

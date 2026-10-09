@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import requests
 
@@ -199,6 +199,62 @@ class ApiClient:
         data = self._request("POST", "/api/chat", json={"message": question, "session_id": session_id or None})
         return _normalize_answer(data)
 
+    def stream_ask(self, question: str, session_id: str = "") -> Iterator[Dict[str, Any]]:
+        """API-07 流式问答（接口文档 2.11）：逐事件产出 ``retrieval`` / ``delta`` / ``done`` / ``error``。
+
+        两条实测要点：
+        1. 流式响应**不走**统一响应包裹（``Content-Type: text/event-stream``）；
+           准备阶段失败（如空问题、空库）仍返回普通 JSON，这里会识别并抛 :class:`ApiError`；
+        2. ``delta`` 粒度很细（实测按字下发），调用方需要自己做节流，别每字重绘。
+        """
+        body: Dict[str, Any] = {"question": question, "session_id": session_id or None, "stream": True}
+        try:
+            resp = self.session.post(self._url("/api/ask"), json=body, stream=True, timeout=self.timeout)
+        except requests.exceptions.Timeout as exc:
+            raise ApiError(code="timeout", message="请求超时", hint="后端响应太慢，请稍后重试。") from exc
+        except requests.exceptions.RequestException as exc:
+            raise _offline_error(exc) from exc
+
+        content_type = resp.headers.get("Content-Type") or ""
+        if "text/event-stream" not in content_type:
+            # 准备阶段失败：仍是统一响应，交给 _unwrap 抛中文错误
+            try:
+                payload = resp.json()
+            except ValueError as exc:
+                raise ApiError(code="bad_response", message="后端未按流式协议返回",
+                               hint=f"HTTP {resp.status_code}，请稍后重试。") from exc
+            finally:
+                resp.close()
+            self._unwrap(payload, resp.status_code)
+            raise ApiError(code="bad_response", message="后端未按流式协议返回", hint="请稍后重试。")
+
+        try:
+            for raw in resp.iter_lines(decode_unicode=True):
+                if not raw:
+                    continue
+                line = raw.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(data)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get("type") == "retrieval":
+                    event = dict(event)
+                    event["citations"] = [
+                        _normalize_citation(c, i + 1)
+                        for i, c in enumerate(event.get("citations") or [])
+                        if isinstance(c, dict)
+                    ]
+                yield event
+        finally:
+            resp.close()
+
     def upload(self, files: Sequence[Tuple[str, bytes, str]]) -> Dict[str, Any]:
         """API-03 ``POST /api/upload``：上传文档建库（multipart，失败隔离）。"""
         multipart = [("files", (name, content, mime or "application/octet-stream")) for name, content, mime in files]
@@ -228,14 +284,52 @@ class ApiClient:
             json={"message_id": message_id, "session_id": session_id, "rating": rating, "comment": comment},
         )
 
-    def list_conversations(self) -> List[Dict[str, Any]]:
-        """API-09 ``GET /api/conversations``（第3周）。"""
-        data = self._request("GET", "/api/conversations")
-        return list(data.get("items", []) if isinstance(data, dict) else data or [])
+    def list_conversations(self, page: int = 1, page_size: int = 20) -> Dict[str, Any]:
+        """API-09 ``GET /api/conversations``：侧栏历史会话（接口文档 2.8、FR-CONV-01）。"""
+        data = self._request("GET", "/api/conversations", params={"page": page, "page_size": page_size})
+        items = list(data.get("items", []) if isinstance(data, dict) else data or [])
+        return {"total": data.get("total", len(items)) if isinstance(data, dict) else len(items), "items": items}
 
     def get_conversation(self, session_id: str) -> Dict[str, Any]:
-        """API-10 ``GET /api/conversations/{session_id}``（第3周，回看历史 US-13）。"""
-        return self._request("GET", f"/api/conversations/{session_id}")
+        """API-10 ``GET /api/conversations/{session_id}``：恢复历史（接口文档 2.9、US-13）。
+
+        返回的消息会归一化成页面渲染用的结构（``answer`` / ``answer_type`` / ``citations``），
+        历史记录里没有 ``answer_type`` 字段，这里按"有引用即 answered、无引用且像兜底话术则 not_found"还原。
+        """
+        data = self._request("GET", f"/api/conversations/{session_id}")
+        messages: List[Dict[str, Any]] = []
+        for raw in data.get("messages", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            role = raw.get("role", "assistant")
+            text = _first(raw, ANSWER_TEXT_KEYS, "")
+            citations = [
+                _normalize_citation(c, i + 1)
+                for i, c in enumerate(raw.get("citations") or [])
+                if isinstance(c, dict)
+            ]
+            if role == "assistant":
+                fallback_words = ("未在", "抱歉", "没找到", "未找到")
+                answer_type = "answered" if citations else ("not_found" if any(w in text for w in fallback_words) else "answered")
+                messages.append({
+                    "role": "assistant",
+                    "answer": text,
+                    "content": text,
+                    "answer_type": answer_type,
+                    "citations": citations,
+                    "retrieved": [],
+                    "message_id": raw.get("message_id", ""),
+                    "trace_id": raw.get("trace_id", ""),
+                    "session_id": data.get("session_id", session_id),
+                    "created_at": raw.get("created_at", ""),
+                })
+            else:
+                messages.append({"role": "user", "content": text, "created_at": raw.get("created_at", "")})
+        return {
+            "session_id": data.get("session_id", session_id),
+            "title": data.get("title", ""),
+            "messages": messages,
+        }
 
     def clear_conversation(self, session_id: str) -> Dict[str, Any]:
         """API-11 ``DELETE /api/conversations/{session_id}``（第3周）。"""

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-09 10:02",
+  "generated_at": "2026-10-09 13:14",
   "owner": "the-tiger-king",
   "repo": "aiQAsystem",
   "total": 35,
@@ -306,18 +306,18 @@
       "week": "第2周",
       "role": "PM",
       "title": "[第2周][PM] Issue 补传与里程碑",
-      "body": "**任务描述**\n第1周 18 条 + 第2周 17 条 Issue 补传 Gitee（本地统一上传）\n\n**交付标准**\nIssue 可在 Gitee 检索\n\n**截止时间**\n10-15\n\n**当前状态**\n🔄 进行中（docs/Issue补传清单_第1-2周.md 已生成，35 条待上传 Gitee）",
+      "body": "**任务描述**\n第1周 18 条 + 第2周 17 条 Issue 补传 Gitee（本地统一上传）\n\n**交付标准**\nIssue 可在 Gitee 检索\n\n**截止时间**\n10-15\n\n**当前状态**\n✅ 已上传（35/35 成功，Issue #IKKCES~#IKKCFS，脚本 scripts/upload_issues.py）",
       "deadline": "10-15",
-      "status": "🔄 进行中（docs/Issue补传清单_第1-2周.md 已生成，35 条待上传 Gitee）"
+      "status": "✅ 已上传（35/35 成功，Issue #IKKCES~#IKKCFS，脚本 scripts/upload_issues.py）"
     },
     {
       "id": "W2-16",
       "week": "第2周",
       "role": "PM",
       "title": "[第2周][PM] 周报与第2周验收",
-      "body": "**任务描述**\n汇总周报，按检查点组织周五周会验收\n\n**交付标准**\n`docs/周报/第2周周报.md`\n\n**截止时间**\n10-15\n\n**当前状态**\n⬜",
+      "body": "**任务描述**\n汇总周报，按检查点组织周五周会验收\n\n**交付标准**\n`docs/周报/第2周周报.md`\n\n**截止时间**\n10-15\n\n**当前状态**\n✅ 已收尾（docs/周报/第2周周报.md + docs/验收报告_第2周.md，tag week2）",
       "deadline": "10-15",
-      "status": "⬜"
+      "status": "✅ 已收尾（docs/周报/第2周周报.md + docs/验收报告_第2周.md，tag week2）"
     }
   ]
 }

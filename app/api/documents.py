@@ -1,15 +1,22 @@
-"""API-04 文档列表 GET /api/documents（接口文档 2.4；W2-06）
+"""API-04 文档列表 / API-05 删除文档（接口文档 2.4 / 2.5；W2-06 / W3-06）
 
-数据源：SQLite documents 台账（与 Chroma 的一致性由健康检查对账，架构 6.6）。
+- GET    /api/documents              文档台账列表（数据源 SQLite，对账见健康检查）
+- DELETE /api/documents/{doc_id}     删除文档及其全部向量与原始文件（架构 6.11 顺序）
 """
+import logging
+import shutil
 from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from ..core.errors import CODE_VALIDATION_FAILED, BizError
+from ..core.config import settings
+from ..core.errors import CODE_NOT_FOUND, CODE_VALIDATION_FAILED, BizError
 from ..core.response import ApiResponse
+from ..knowledge.store import vector_store
 from ..models.document import DocumentItem, PageData
 from ..services.repository import get_repository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
@@ -39,3 +46,39 @@ async def list_documents(
         for row in rows
     ]
     return ApiResponse.ok(PageData(total=total, page=page, page_size=page_size, items=items).model_dump())
+
+
+@router.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str) -> dict:
+    """删除文档及其全部向量与原始文件（FR-KB-05 / US-10；接口文档 2.5）
+
+    - 台账不存在或已删除 → 1005（重复删除安全，无副作用）；
+    - 执行顺序（架构 6.11）：删向量 → 删原始文件 → 更新台账；
+    - 台账保留记录并置 status=deleted，便于审计与对账。
+    """
+    repository = get_repository()
+    document = repository.get_document(doc_id)
+    if not document or document.get("status") == "deleted":
+        raise BizError(CODE_NOT_FOUND, "文档不存在或已被删除")
+
+    # 1) 删向量（失败抛 2003；此时台账不变，可安全重试）
+    deleted_chunks = vector_store.delete_by_doc(doc_id)
+
+    # 2) 删原始文件目录（data/uploads/{doc_id}/；不存在或失败不影响主流程）
+    _remove_upload_dir(doc_id)
+
+    # 3) 台账置 deleted（保留记录便于审计）
+    repository.set_document_status(doc_id, "deleted")
+
+    logger.info("文档删除完成：%s（%d 个切片）", doc_id, deleted_chunks)
+    return ApiResponse.ok({"doc_id": doc_id, "deleted_chunks": deleted_chunks})
+
+
+def _remove_upload_dir(doc_id: str) -> None:
+    """删除上传目录 data/uploads/{doc_id}/（防目录穿越：仅允许上传根目录内的子目录）"""
+    upload_root = settings.upload_dir.resolve()
+    target = (upload_root / doc_id).resolve()
+    if upload_root not in target.parents:
+        logger.warning("跳过异常上传目录：%s", target)
+        return
+    shutil.rmtree(target, ignore_errors=True)

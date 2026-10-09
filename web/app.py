@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -81,6 +82,10 @@ def init_state() -> None:
     ss.setdefault("api_base", DEFAULT_BASE_URL)
     ss.setdefault("health", None)
     ss.setdefault("doc_summary", None)
+    ss.setdefault("feedback_done", {})        # 已反馈过的 message_id（US-12，避免重复提交）
+    ss.setdefault("conversations", None)      # 历史会话缓存（FR-CONV-01）
+    ss.setdefault("first_query_done", False)  # 首次检索需加载本地向量模型，界面要提前打招呼
+    ss.setdefault("stream_mode", True)        # 流式回答（接口文档 2.11）：边生成边显示
 
 
 def current_client() -> ApiClient:
@@ -109,6 +114,85 @@ def match_demo(question: str) -> Dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 渲染：一次回答
 # --------------------------------------------------------------------------- #
+def infer_answer_type(text: str, citations: List[Dict[str, Any]]) -> str:
+    """推断三态（流式协议与历史记录里都没有 answer_type 字段）。
+
+    有引用 → answered；没有引用但读起来像兜底话术 → not_found；其余按 answered 处理。
+    """
+    if citations:
+        return "answered"
+    fallback_words = ("未在", "没找到", "未找到", "抱歉")
+    return "not_found" if any(w in (text or "") for w in fallback_words) else "answered"
+
+
+def _start_stream(question: str) -> Dict[str, Any]:
+    """检索阶段（含首次模型加载）由外层 spinner 负责，这里只负责生成阶段的渲染。"""
+    return render_stream_answer(question)
+
+
+def render_stream_answer(question: str) -> Dict[str, Any]:
+    """流式问答（接口文档 2.11、W4-07）：先收 retrieval 事件，再逐段显示答案。
+
+    实测 delta 是按字下发的，这里做节流（累计 6 字或间隔 80ms 才重绘一次），
+    否则一次问答会触发上百次页面重绘。流结束后清掉临时文本，改由统一的答案卡片渲染
+    （这样引用折叠条、徽章、反馈按钮的样式与非流式完全一致）。
+    """
+    ss = st.session_state
+    loading_text = "正在检索知识库…" if ss["first_query_done"] else "首次使用要加载检索模型（约 10~15 秒），请稍候…"
+    hint = st.empty()
+    hint.caption(f"⏳ {loading_text}")
+    placeholder = None
+    answer = ""
+    meta: Dict[str, Any] = {}
+    pending = ""
+    last_draw = time.monotonic()
+    try:
+        for event in current_client().stream_ask(question, session_id=ss["session_id"]):
+            etype = event.get("type")
+            if etype == "retrieval":
+                hint.empty()
+                placeholder = st.empty()
+                meta = dict(event)
+            elif etype == "delta":
+                chunk = event.get("content") or ""
+                answer += chunk
+                pending += chunk
+                if placeholder is None:      # 极端情况下没有 retrieval 事件就直接来 delta
+                    hint.empty()
+                    placeholder = st.empty()
+                now = time.monotonic()
+                if len(pending) >= 6 or (now - last_draw) >= 0.08:
+                    placeholder.markdown(
+                        cite_ui.highlight_references(answer) + " ▍", unsafe_allow_html=True
+                    )
+                    pending, last_draw = "", now
+            elif etype == "done":
+                meta = {**meta, **event}
+            elif etype == "error":
+                raise ApiError(
+                    code=event.get("code"),
+                    message=event.get("message") or "回答生成失败",
+                    hint="可以点「重试这次提问」，或打开左侧「演示模式」继续演示。",
+                )
+    finally:
+        hint.empty()
+        if placeholder is not None:
+            placeholder.empty()
+
+    citations = meta.get("citations") or []
+    return {
+        "answer": answer,
+        "answer_type": infer_answer_type(answer, citations),
+        "citations": citations,
+        "retrieved": meta.get("retrieved") or [],
+        "session_id": meta.get("session_id") or ss["session_id"],
+        "message_id": meta.get("message_id", ""),
+        "trace_id": meta.get("trace_id", ""),
+        "latency_ms": meta.get("latency_ms"),
+        "model": meta.get("model", ""),
+    }
+
+
 def render_assistant_message(message: Dict[str, Any]) -> None:
     answer_type = message.get("answer_type", "answered")
     st.markdown(states.answer_type_badge(answer_type), unsafe_allow_html=True)
@@ -152,10 +236,24 @@ def run_turn(question: str, *, is_retry: bool = False) -> None:
     with st.chat_message("assistant"):
         if ss["demo_mode"]:
             reply: Dict[str, Any] = match_demo(question)
-        else:
+        elif ss["stream_mode"]:
+            # 流式：先给出"正在检索"提示，收到 retrieval 后开始逐字显示答案
             try:
-                with st.spinner("正在检索知识库…"):
+                reply = _start_stream(question)   # 加载提示与逐字显示都在函数内部处理
+                ss["first_query_done"] = True
+            except ApiError as exc:
+                if states.error_notice(exc, retry_label="重试这次提问"):
+                    ss["pending_question"] = question
+                    ss["pending_is_retry"] = True
+                    st.rerun()
+                return
+        else:
+            # 本地向量模型首次加载约 10~15 秒（第2周验收记录），提前告诉用户，避免以为卡死
+            spinner_text = "正在检索知识库…" if ss["first_query_done"] else "首次使用要加载检索模型（约 10~15 秒），请稍候…"
+            try:
+                with st.spinner(spinner_text):
                     reply = current_client().ask(question, session_id=ss["session_id"])
+                ss["first_query_done"] = True
             except ApiError as exc:
                 if states.error_notice(exc, retry_label="重试这次提问"):
                     ss["pending_question"] = question
@@ -169,6 +267,83 @@ def run_turn(question: str, *, is_retry: bool = False) -> None:
         ss["messages"].append({"role": "assistant", **reply})
 
 
+def session_to_markdown(session_id: str, messages: List[Dict[str, Any]], exported_at: str = "") -> str:
+    """把一段会话整理成 Markdown 文本（纯函数，便于离线单测；FR-CONV-03）。
+
+    导出内容包含：会话信息、每轮的"提问 / 答案 / 引用来源（文件名 + 位置 + 原文片段）"。
+    """
+    exported_at = exported_at or f"{datetime.now():%Y-%m-%d %H:%M}"
+    rounds = len([m for m in messages if m.get("role") == "user"])
+    lines = [
+        "# 企业知识库智能问答 · 会话导出",
+        "",
+        f"- 会话 ID：`{session_id}`",
+        f"- 导出时间：{exported_at}",
+        f"- 共 {rounds} 轮问答",
+        "",
+    ]
+    if not messages:
+        lines.append("_（本会话还没有问答内容）_")
+        return "\n".join(lines)
+
+    for msg in messages:
+        if msg.get("role") == "user":
+            lines += ["## 🧑 提问", "", str(msg.get("content", "")), ""]
+            continue
+        lines += ["## 🤖 回答", "", str(msg.get("answer") or msg.get("content") or ""), ""]
+        cites = msg.get("citations") or []
+        if cites:
+            lines += ["**引用来源**", ""]
+            for cite in cites:
+                score = cite.get("score")
+                score_text = f"（相关度 {score:.2f}）" if isinstance(score, (int, float)) else ""
+                lines.append(
+                    f"- [{cite.get('index', '')}] {cite.get('source_file', '未知来源')} "
+                    f"· {cite.get('location', '')}{score_text}"
+                )
+                snippet = str(cite.get("snippet") or "").replace("\n", " ").strip()
+                if snippet:
+                    lines.append(f"  > {snippet}")
+            lines.append("")
+    return "\n".join(lines)
+
+
+def build_session_markdown() -> str:
+    """当前会话的 Markdown 导出内容（供 st.download_button 使用）。"""
+    ss = st.session_state
+    return session_to_markdown(ss["session_id"], ss["messages"])
+
+
+def load_conversation(session_id: str) -> None:
+    """切换到历史会话：拉取完整问答记录（含引用）并回显（FR-CONV-02、US-13）。"""
+    ss = st.session_state
+    try:
+        data = current_client().get_conversation(session_id)
+    except ApiError as exc:
+        st.toast(f"读取会话失败：{exc.display}", icon="⚠️")
+        return
+    ss["messages"] = data.get("messages", [])
+    ss["session_id"] = data.get("session_id", session_id)
+    ss["pending_question"] = ""
+    ss["feedback_done"] = {}
+    st.rerun()
+
+
+def clear_current_session() -> None:
+    """清空当前会话：后端删消息 + 本地清屏（接口文档 2.10，需求 Q-01 决议）。"""
+    ss = st.session_state
+    if not ss["demo_mode"]:
+        try:
+            res = current_client().clear_conversation(ss["session_id"])
+            st.toast(f"已清空当前会话（{res.get('deleted_messages', 0)} 条消息）", icon="🧹")
+        except ApiError as exc:
+            st.toast(f"清空失败：{exc.display}", icon="⚠️")
+    ss["messages"] = []
+    ss["feedback_done"] = {}
+    ss["conversations"] = None
+    st.rerun()
+
+
 # --------------------------------------------------------------------------- #
 # 侧栏：连接状态 / 会话 / 演示模式 / 知识库概况
 # --------------------------------------------------------------------------- #
@@ -176,7 +351,7 @@ def render_sidebar() -> None:
     ss = st.session_state
     with st.sidebar:
         st.markdown("### 💬 企业知识库智能问答")
-        st.caption("Streamlit 前端骨架 · 第1周 UI 交付")
+        st.caption("Streamlit 前端 · 第3周 体验打磨")
 
         st.divider()
         st.markdown("**服务连接**")
@@ -199,7 +374,13 @@ def render_sidebar() -> None:
         ss["demo_mode"] = st.toggle(
             "使用预置问答（断网可演示）",
             value=ss["demo_mode"],
-            help="对应需求 FR-UI-05 / US-14：答辩现场网络异常时展示预置的带引用答案。",
+            help="对应需求 FR-UI-05 / US-14：现场网络异常时展示预置的带引用答案。",
+        )
+        ss["stream_mode"] = st.toggle(
+            "流式回答（边生成边显示）",
+            value=ss["stream_mode"],
+            disabled=ss["demo_mode"],
+            help="对应接口文档 2.11：答案逐字显示，等待感更弱；关闭则等生成完一次性显示。演示模式下不可用。",
         )
 
         st.divider()
@@ -211,11 +392,59 @@ def render_sidebar() -> None:
                 ss["messages"] = []
                 ss["session_id"] = new_session_id()
                 ss["pending_question"] = ""
+                ss["first_query_done"] = False
+                ss["feedback_done"] = {}
                 st.rerun()
         with col_2:
-            if st.button("清空对话", use_container_width=True):
-                ss["messages"] = []
-                st.rerun()
+            if st.button("清空当前会话", use_container_width=True):
+                clear_current_session()
+
+        # 导出会话（FR-CONV-03）：含问题、答案与引用，便于留档或写进报告
+        has_messages = bool(ss["messages"])
+        st.download_button(
+            "⬇️ 导出本会话（Markdown）",
+            data=build_session_markdown() if has_messages else "",
+            file_name=f"aiqa_{ss['session_id']}.md",
+            mime="text/markdown",
+            use_container_width=True,
+            disabled=not has_messages,
+            help="导出当前会话的全部问题、答案与引用来源（FR-CONV-03）",
+            key="export_session",
+        )
+
+        # 历史会话（FR-CONV-01/02、US-13；演示模式下不查后端）
+        with st.expander("历史会话", expanded=False):
+            if ss["demo_mode"]:
+                st.caption("演示模式下不读取历史会话。")
+            else:
+                if st.button("刷新列表", use_container_width=True, key="refresh_convs"):
+                    ss["conversations"] = None
+                if ss["conversations"] is None:
+                    try:
+                        ss["conversations"] = current_client().list_conversations(page_size=20)
+                    except ApiError as exc:
+                        ss["conversations"] = {"total": 0, "items": [], "error": exc.display}
+                convs = ss["conversations"] or {}
+                if convs.get("error"):
+                    st.caption(f"读不到历史会话：{convs['error']}")
+                else:
+                    items = convs.get("items", [])
+                    if not items:
+                        st.caption("还没有历史会话。")
+                    else:
+                        st.caption(f"共 {convs.get('total', len(items))} 个，点标题可切回：")
+                        for conv in items:
+                            sid = conv.get("session_id", "")
+                            title = conv.get("title") or "（无标题会话）"
+                            if len(title) > 16:
+                                title = title[:16] + "…"
+                            mark = "🟢 " if sid == ss["session_id"] else ""
+                            if st.button(
+                                f"{mark}{title} · {conv.get('message_count', 0)} 条",
+                                key=f"conv_{sid}",
+                                use_container_width=True,
+                            ):
+                                load_conversation(sid)
 
         st.divider()
         st.markdown("**知识库概况**")
@@ -269,5 +498,5 @@ def main() -> None:
     if question:
         run_turn(str(question), is_retry=is_retry)
 
-
-main()
+if __name__ == "__main__":  # Streamlit 运行脚本时成立；被 import 时不会执行页面
+    main()

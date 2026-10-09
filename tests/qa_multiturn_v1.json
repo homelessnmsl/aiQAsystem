@@ -1,0 +1,202 @@
+[
+  {
+    "id": "MT-01",
+    "type": "多轮追问",
+    "difficulty": "medium",
+    "scenario": "试用期年假 → 转正后折算（指代消解）",
+    "turns": [
+      {
+        "question": "试用期员工有年假吗？",
+        "expected_answer": "试用期员工不享受年假。",
+        "expected_source": "01_员工手册.pdf",
+        "expected_location": "第 3 页（第三章 3.2）",
+        "answer_type": "answered",
+        "key_points": ["试用期不享受年假"]
+      },
+      {
+        "question": "那转正之后呢？",
+        "expected_answer": "转正当年度年假按转正后剩余日历天数折算，折算后不足 1 天的部分不计入。",
+        "expected_source": "01_员工手册.pdf",
+        "expected_location": "第 3 页（第三章 3.2）",
+        "answer_type": "answered",
+        "key_points": ["按转正后剩余日历天数折算", "不足 1 天不计入"]
+      }
+    ],
+    "notes": "“那…呢”应还原为“转正之后年假怎么算”；第 2 轮不得重复第 1 轮已给信息。"
+  },
+  {
+    "id": "MT-02",
+    "type": "多轮追问",
+    "difficulty": "medium",
+    "scenario": "住宿标准逐档追问（表格 + 省略式追问）",
+    "turns": [
+      {
+        "question": "一线城市出差住宿标准是多少？",
+        "expected_answer": "一线城市住宿标准上限 500 元/晚。",
+        "expected_source": "03_报销制度与费用标准.xlsx",
+        "expected_location": "工作表「差旅标准」（住宿列）",
+        "answer_type": "answered",
+        "key_points": ["500 元/晚"]
+      },
+      {
+        "question": "那二线城市呢？",
+        "expected_answer": "二线城市住宿标准上限 400 元/晚。",
+        "expected_source": "03_报销制度与费用标准.xlsx",
+        "expected_location": "工作表「差旅标准」（住宿列）",
+        "answer_type": "answered",
+        "key_points": ["400 元/晚"]
+      }
+    ],
+    "notes": "第 2 轮只需回答二线档位，不重复一线内容；考察表格追问的定位准确性。"
+  },
+  {
+    "id": "MT-03",
+    "type": "多轮追问",
+    "difficulty": "medium",
+    "scenario": "报销材料 → 出差申请时限（话题延伸）",
+    "turns": [
+      {
+        "question": "出差报销需要准备哪些材料？",
+        "expected_answer": "报销单、发票原件、出差申请单（差旅类）、审批单。",
+        "expected_source": "05_常见问题FAQ.md",
+        "expected_location": "章节「3. 报销需要准备哪些材料？」",
+        "answer_type": "answered",
+        "key_points": ["报销单", "发票原件", "出差申请单", "审批单"]
+      },
+      {
+        "question": "那出差需要提前多久申请？",
+        "expected_answer": "需提前 3 个工作日提交出差申请；未提前申请的不予报销差旅费用。",
+        "expected_source": "05_常见问题FAQ.md",
+        "expected_location": "章节「6. 出差需要提前多久申请？」",
+        "answer_type": "answered",
+        "key_points": ["提前 3 个工作日", "未提前申请不予报销差旅费"]
+      }
+    ],
+    "notes": "材料清单在《报销制度与费用标准》「报销流程」中也有同义表述，引用两者均视为正确来源（人工判定）。"
+  },
+  {
+    "id": "MT-04",
+    "type": "多轮追问",
+    "difficulty": "medium",
+    "scenario": "试用期时长 → 转正流程（同文档跨页追问）",
+    "turns": [
+      {
+        "question": "新员工试用期是几个月？",
+        "expected_answer": "试用期为 3 个月；表现优秀者可由直属上级推荐，提前至 2 个月申请转正。",
+        "expected_source": "06_入职培训指南.pdf",
+        "expected_location": "第 1 页（1.2 试用期）",
+        "answer_type": "answered",
+        "key_points": ["3 个月"]
+      },
+      {
+        "question": "那转正申请要走哪些流程？",
+        "expected_answer": "试用期结束前 10 个工作日提交《转正申请表》；审批共 5 个环节：提交申请 → 直属上级评估 → 部门负责人复核 → 人力资源部审批 → 结果通知。",
+        "expected_source": "06_入职培训指南.pdf",
+        "expected_location": "第 2 页（2.1 提交申请 / 2.2 审批流程）",
+        "answer_type": "answered",
+        "key_points": ["试用期结束前 10 个工作日提交", "5 个环节"]
+      }
+    ],
+    "notes": "两轮期望位置不同（第 1 页 / 第 2 页），用于检验逐轮引用位置是否随问题更新。"
+  },
+  {
+    "id": "MT-05",
+    "type": "多轮追问",
+    "difficulty": "hard",
+    "scenario": "年假天数 → 年假结转（同一制度纵深追问）",
+    "turns": [
+      {
+        "question": "公司年假有多少天？",
+        "expected_answer": "满 1 年不满 10 年每年 5 天；满 10 年不满 20 年每年 10 天；满 20 年以上每年 15 天。",
+        "expected_source": "01_员工手册.pdf",
+        "expected_location": "第 3 页（第三章 3.1）",
+        "answer_type": "answered",
+        "key_points": ["5 天", "10 天", "15 天"]
+      },
+      {
+        "question": "那今年用不完可以留到明年吗？",
+        "expected_answer": "可以：年假最多可结转 5 天，须在次年 3 月 31 日前使用，逾期作废。",
+        "expected_source": "01_员工手册.pdf",
+        "expected_location": "第 3 页（第三章 3.4 年假结转）",
+        "answer_type": "answered",
+        "key_points": ["最多结转 5 天", "次年 3 月 31 日前使用"]
+      }
+    ],
+    "notes": "“留到明年”对应“年假结转”，考察口语化追问与制度术语的映射。"
+  },
+  {
+    "id": "MT-06",
+    "type": "多轮追问",
+    "difficulty": "medium",
+    "scenario": "连续两轮越界问题（拒答一致性）",
+    "turns": [
+      {
+        "question": "公司食堂几点开饭？",
+        "expected_answer": "知识库中没有食堂信息；应明确告知未找到依据，不得编造时间。",
+        "expected_source": null,
+        "expected_location": null,
+        "answer_type": "not_found",
+        "key_points": ["明确说明未找到依据"]
+      },
+      {
+        "question": "那附近有什么好吃的推荐吗？",
+        "expected_answer": "仍应告知未找到依据；不得推荐餐厅或编造信息。",
+        "expected_source": null,
+        "expected_location": null,
+        "answer_type": "not_found",
+        "key_points": ["明确说明未找到依据", "不编造推荐"]
+      }
+    ],
+    "notes": "连续两轮越界问题都应拒答，用于检验多轮场景下拒答是否稳定（M-04 延伸）。"
+  },
+  {
+    "id": "MT-07",
+    "type": "多轮追问",
+    "difficulty": "medium",
+    "scenario": "通讯补贴 → 团建限额（同工作表不同行追问）",
+    "turns": [
+      {
+        "question": "员工的通讯补贴是多少？",
+        "expected_answer": "通讯补贴 200 元/月，随工资发放，无需报销。",
+        "expected_source": "03_报销制度与费用标准.xlsx",
+        "expected_location": "工作表「费用限额」（通讯补贴行）",
+        "answer_type": "answered",
+        "key_points": ["200 元/月"]
+      },
+      {
+        "question": "那团建活动的人均限额呢？",
+        "expected_answer": "团建活动人均不超过 150 元/季度，需提前提交活动方案。",
+        "expected_source": "03_报销制度与费用标准.xlsx",
+        "expected_location": "工作表「费用限额」（团建活动行）",
+        "answer_type": "answered",
+        "key_points": ["人均不超过 150 元/季度"]
+      }
+    ],
+    "notes": "同一工作表相邻行，考察表格追问不串行、不混淆数值。"
+  },
+  {
+    "id": "MT-08",
+    "type": "多轮追问",
+    "difficulty": "hard",
+    "scenario": "事假 → 病假（干扰文档内切换小节）",
+    "turns": [
+      {
+        "question": "事假每月最多可以请几天？",
+        "expected_answer": "事假无薪，每月累计不超过 3 天，全年累计不超过 15 天。",
+        "expected_source": "08_考勤与假期管理规定.txt",
+        "expected_location": "第 4 章（事假）",
+        "answer_type": "answered",
+        "key_points": ["每月 3 天", "全年 15 天"]
+      },
+      {
+        "question": "那病假期间工资怎么发？",
+        "expected_answer": "病假期间按本人日工资的 70% 发放，每年累计不超过 30 天。",
+        "expected_source": "08_考勤与假期管理规定.txt",
+        "expected_location": "第 3 章（病假）",
+        "answer_type": "answered",
+        "key_points": ["按日工资 70% 发放", "每年累计不超过 30 天"]
+      }
+    ],
+    "notes": "干扰文档校验：两轮都应引用《考勤与假期管理规定》，不得误引《员工手册》。"
+  }
+]

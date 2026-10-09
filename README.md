@@ -31,6 +31,15 @@ pip install -r requirements.txt
 cp .env.example .env          # 填入自己的 API Key
 ```
 
+### 演示 / 交付一键启动
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start_demo.ps1        # 起后端+前端+预热+健康检查
+powershell -ExecutionPolicy Bypass -File scripts\start_demo.ps1 -Stop  # 停止
+```
+
+详细参数、日志位置与排障见 [docs/演示部署说明.md](docs/演示部署说明.md)。
+
 ## 仓库规范
 
 - 协作规范：[CONTRIBUTING.md](CONTRIBUTING.md)
@@ -41,9 +50,9 @@ cp .env.example .env          # 填入自己的 API Key
 
 ## 周计划
 
-- 当前周任务看板：[docs/第2周任务清单.md](docs/第2周任务清单.md)
+- 当前周任务看板：[docs/第4周任务清单.md](docs/第4周任务清单.md)
 
 - 第1周 ✅：基础搭建 + 需求定稿（FastAPI + DeepSeek 打通，tag week1）
-- 第2周 🔄：RAG 核心链路（上传 → 检索 → 带引用回答）
+- 第2周 ✅：RAG 核心链路（上传 → 检索 → 带引用回答，tag week2）
 - 第3周：检索优化（Rerank）+ 体验打磨
-- 第4周：整合测试 + 答辩
+- 第4周 🔄：整合测试与交付（答辩已取消）

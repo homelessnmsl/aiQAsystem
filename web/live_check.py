@@ -78,6 +78,144 @@ def ui_stage(client: ApiClient, base: str) -> None:
     rendered = " ".join([m.value for m in kb.markdown] + [c.value for c in kb.caption])
     check("知识库管理页：无异常", not kb.exception, str([e.value for e in kb.exception]))
     check("知识库管理页：渲染出文档列表", "01_员工手册.pdf" in rendered and "03_报销制度与费用标准.xlsx" in rendered)
+    metric_labels = [m.label for m in kb.metric]
+    check("知识库管理页：顶部知识库概况（文档数/切片数）",
+          "已入库文档" in metric_labels and "切片总数" in metric_labels, str(metric_labels))
+
+    at_side = AppTest.from_file(str(web_dir / "app.py"), default_timeout=120)
+    at_side.run()
+    side_texts = " ".join([m.value for m in at_side.markdown] + [c.value for c in at_side.caption])
+    buttons = [b.label for b in at_side.button]
+    check("问答页：侧栏有历史会话入口", any("历史会话" in e.label for e in at_side.expander),
+          str([e.label for e in at_side.expander]))
+    check("问答页：侧栏有流式回答开关（W4-07）",
+          any("流式回答" in t.label for t in at_side.toggle), str([t.label for t in at_side.toggle]))
+    at_side.chat_input[0].set_value(CASES[0][0]).run()
+    check("问答页：回答下方有点赞/点踩按钮", any("有帮助" in b for b in buttons) or any("有帮助" in b.label for b in at_side.button))
+    stream_texts = [m.value for m in at_side.markdown]
+    check("问答页：流式渲染出完整答案（无残留光标）",
+          any(("年假" in x and "5 天" in x) for x in stream_texts) and not any("▍" in x for x in stream_texts))
+    check("问答页：流式回答同样带引用折叠条", any("01_员工手册.pdf" in e.label for e in at_side.expander))
+
+    # 删除确认弹窗：只点"取消"，绝不真删（共享知识库）
+    kb2 = AppTest.from_file(str(web_dir / "pages" / "1_知识库管理.py"), default_timeout=120)
+    kb2.run()
+    before = len([b for b in kb2.button if b.label == "删除"])
+    dele = next((b for b in kb2.button if b.label == "删除"), None)
+    if dele is None:
+        check("知识库管理页：删除按钮存在", False, "列表为空或读取失败")
+    else:
+        dele.click().run()
+        dialog_buttons = [b.label for b in kb2.button if b.label in ("确认删除", "取消")]
+        check("知识库管理页：删除弹窗打开且带确认/取消（W4-07）", dialog_buttons == ["确认删除", "取消"], str(dialog_buttons))
+        warn_text = " ".join(w.value for w in kb2.warning)
+        check("知识库管理页：弹窗点名要删的文件", "确认删除《" in warn_text, warn_text[:60].replace("\n", " "))
+        cancel = next((b for b in kb2.button if b.label == "取消"), None)
+        if cancel:
+            cancel.click().run()
+            kb2.run()   # 下一次完整渲染，弹窗应消失
+            check("知识库管理页：取消后弹窗关闭", not [b for b in kb2.button if b.label in ("确认删除", "取消")])
+            check("知识库管理页：取消未误删文档", len([b for b in kb2.button if b.label == "删除"]) == before)
+
+
+def stream_stage(client: ApiClient) -> None:
+    """流式问答（接口文档 2.11、W4-07）：事件序列必须 retrieval → delta* → done。"""
+    print("\n" + "=" * 60 + "\n流式问答（SSE）")
+    kinds: list[str] = []
+    text = ""
+    retrieval: dict = {}
+    done: dict = {}
+    try:
+        for event in client.stream_ask("公司年假有多少天？", session_id="conv_ui_stream_check"):
+            kinds.append(event.get("type", "?"))
+            if event["type"] == "retrieval":
+                retrieval = event
+            elif event["type"] == "delta":
+                text += event.get("content") or ""
+            elif event["type"] == "done":
+                done = event
+    except ApiError as exc:
+        check("流式：正常返回事件流", False, f"{exc.code} {exc.message}")
+        return
+
+    check("流式：首个事件是 retrieval（可先渲染引用卡片）", kinds[:1] == ["retrieval"], str(kinds[:3]))
+    check("流式：最后一个事件是 done", kinds[-1:] == ["done"], str(kinds[-3:]))
+    check("流式：收到多个 delta（逐字/逐段下发）", kinds.count("delta") >= 5, f"delta {kinds.count('delta')} 个")
+    check("流式：retrieval 带 message_id 与引用", bool(retrieval.get("message_id")) and bool(retrieval.get("citations")),
+          f"message_id={bool(retrieval.get('message_id'))} citations={len(retrieval.get('citations') or [])}")
+    check("流式：拼接出的答案非空且含要点", "5 天" in text or "年假" in text, text[:60])
+    check("流式：done 带耗时信息", bool(done.get("latency_ms")), str(done)[:80])
+
+    try:
+        list(client.stream_ask("", session_id="conv_ui_stream_check"))
+        check("流式：空问题被拒绝（准备阶段走统一错误）", False, "未报错")
+    except ApiError as exc:
+        check("流式：空问题被拒绝（准备阶段走统一错误）", exc.code in (1004, 1001), f"code={exc.code}")
+
+
+def session_stage(client: ApiClient) -> None:
+    """会话历史与反馈（第3周新增交互：FR-CONV-01/02、US-12/13、接口文档 2.7~2.10）。
+
+    自建一个专用会话做完整往返：提问 → 会话列表可见 → 详情含引用 → 反馈 → 清空，
+    结束后把该会话清掉，不给团队留垃圾数据。
+    """
+    import time
+    print("\n" + "=" * 60 + "\n会话与反馈（第3周新增交互）")
+    sid = f"conv_ui_check_{int(time.time())}"
+
+    try:
+        asked = client.ask("公司年假有多少天？", session_id=sid)
+    except ApiError as exc:
+        check("会话：提问成功", False, f"{exc.code} {exc.message}")
+        return
+    check("会话：提问返回 message_id", bool(asked.get("message_id")))
+    check("会话：引用编号连续（D2-02 修复后）",
+          [c["index"] for c in asked["citations"]] == list(range(1, len(asked["citations"]) + 1)),
+          str([c["index"] for c in asked["citations"]]))
+
+    convs = client.list_conversations(page_size=50)
+    mine = next((c for c in convs["items"] if c["session_id"] == sid), None)
+    check("会话列表：能查到刚提问的会话", mine is not None, f"共 {convs['total']} 个会话")
+    if mine:
+        print(f"   标题：{mine['title']}（{mine['message_count']} 条）")
+
+    detail = client.get_conversation(sid)
+    msgs = detail["messages"]
+    roles = [m["role"] for m in msgs]
+    check("会话详情：包含用户与助手两条消息", roles == ["user", "assistant"], str(roles))
+    if len(msgs) == 2:
+        check("会话详情：助手消息带回引用（可回显 FR-CIT-03）",
+              bool(msgs[1].get("citations")) and msgs[1]["answer_type"] == "answered",
+              f"answer_type={msgs[1]['answer_type']} citations={len(msgs[1].get('citations') or [])}")
+        print(f"   回显答案：{msgs[1]['answer'][:60].replace(chr(10), ' ')}")
+
+    message_id = asked.get("message_id", "")
+    try:
+        up = client.send_feedback(message_id, "up", session_id=sid)
+        check("反馈：点赞成功（US-12）", bool(up.get("feedback_id")), str(up))
+    except ApiError as exc:
+        check("反馈：点赞成功（US-12）", False, f"{exc.code} {exc.message}")
+    try:
+        down = client.send_feedback(message_id, "down", comment="UI 自检：测试点踩原因", session_id=sid)
+        check("反馈：点踩并带原因成功", bool(down.get("feedback_id")), str(down))
+    except ApiError as exc:
+        check("反馈：点踩并带原因成功", False, f"{exc.code} {exc.message}")
+    try:
+        client.send_feedback(message_id, "sideways", session_id=sid)
+        check("反馈：非法 rating 被拒绝（1001）", False, "未报错")
+    except ApiError as exc:
+        check("反馈：非法 rating 被拒绝（1001）", exc.code == 1001, f"code={exc.code}")
+
+    try:
+        cleared = client.clear_conversation(sid)
+        check("清空会话：返回删除条数", int(cleared.get("deleted_messages", 0)) >= 2, str(cleared))
+    except ApiError as exc:
+        check("清空会话：返回删除条数", False, f"{exc.code} {exc.message}")
+    try:
+        after = client.get_conversation(sid)
+        check("清空会话：消息已清空", not after["messages"], f"剩余 {len(after['messages'])} 条")
+    except ApiError as exc:
+        check("清空会话：消息已清空", exc.code == 1005, f"code={exc.code}（会话已不存在也算通过）")
 
 
 def main() -> int:
@@ -145,6 +283,9 @@ def main() -> int:
             check("上传结果字段齐全", all("filename" in it and "status" in it for it in res["items"]))
         except ApiError as exc:
             check("上传接口正常返回", False, f"{exc.code} {exc.message}")
+
+    session_stage(client)
+    stream_stage(client)
 
     if "--no-ui" not in sys.argv:
         ui_stage(client, os.environ.get("WEB_API_BASE", BASE))

@@ -19,11 +19,26 @@ from app.core.errors import (
 from app.services.llm import DeepSeekClient
 
 
-def _response(content: str = "你好", model: str = "deepseek-chat"):
-    """构造一个 OpenAI 风格的响应对象"""
+def _response(
+    content: str = "你好",
+    model: str = "deepseek-chat",
+    *,
+    finish_reason: str = "stop",
+    reasoning: str | None = None,
+):
+    """构造一个 OpenAI 风格的响应对象（可选携带推理模型的 reasoning_content）"""
     message = SimpleNamespace(content=content, tool_calls=None)
+    if reasoning is not None:
+        message.reasoning_content = reasoning  # 模拟 deepseek-v4-pro 的思维链字段
     usage = SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3)
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)], model=model, usage=usage)
+    choice = SimpleNamespace(message=message, finish_reason=finish_reason)
+    return SimpleNamespace(choices=[choice], model=model, usage=usage)
+
+
+def _delta_chunk(content: str | None = None, reasoning: str | None = None):
+    """构造一个流式分片（delta 携带正文或思维链）"""
+    delta = SimpleNamespace(content=content, reasoning_content=reasoning)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
 
 
 class _FakeCompletions:
@@ -114,3 +129,47 @@ def test_client_without_key():
     with pytest.raises(BizError) as exc_info:
         DeepSeekClient(api_key="")
     assert exc_info.value.code == CODE_LLM_NO_KEY
+
+
+# ============ 推理模型（reasoning_content）兼容 ============
+def test_chat_with_reasoning_content(monkeypatch):
+    """推理模型返回 reasoning_content：只取正文，思维链不外泄"""
+    client, _ = _make_client(
+        [_response("收到", reasoning="我们需要回答两个字：收到。")],
+        monkeypatch=monkeypatch,
+    )
+    result = client.chat([{"role": "user", "content": "请只回复两个字：收到"}])
+    assert result.content == "收到"
+
+
+def test_chat_reasoning_consumed_budget(monkeypatch):
+    """思维链耗尽 max_tokens：content 为空且 finish_reason=length → 3004，提示被截断"""
+    client, _ = _make_client(
+        [_response("", finish_reason="length", reasoning="我们需要回答用户中文问题……")],
+        monkeypatch=monkeypatch,
+    )
+    with pytest.raises(BizError) as exc_info:
+        client.chat([{"role": "user", "content": "问题"}])
+    assert exc_info.value.code == CODE_LLM_BAD_RESPONSE
+    assert "截断" in exc_info.value.message
+
+
+def test_stream_chat_skips_reasoning(monkeypatch):
+    """流式：思维链分片全部跳过，只下发正文"""
+    chunks = [
+        _delta_chunk(reasoning="先想一下…"),
+        _delta_chunk(reasoning="继续想…"),
+        _delta_chunk(content="您"),
+        _delta_chunk(content="好"),
+    ]
+    client, _ = _make_client([chunks], monkeypatch=monkeypatch)
+    assert list(client.stream_chat([{"role": "user", "content": "hi"}])) == ["您", "好"]
+
+
+def test_stream_chat_only_reasoning_raises(monkeypatch):
+    """流式：整条流只有思维链（预算被耗尽）→ 抛 3004，而不是产出空回答"""
+    chunks = [_delta_chunk(reasoning="想了很多"), _delta_chunk(reasoning="还是没写完")]
+    client, _ = _make_client([chunks], monkeypatch=monkeypatch)
+    with pytest.raises(BizError) as exc_info:
+        list(client.stream_chat([{"role": "user", "content": "hi"}]))
+    assert exc_info.value.code == CODE_LLM_BAD_RESPONSE
