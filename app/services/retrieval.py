@@ -12,7 +12,9 @@
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -38,6 +40,7 @@ class RetrievedChunk:
     content: str
     score: float
     rerank_score: Optional[float] = None
+    snippet: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -83,7 +86,7 @@ def retrieve(
         hits = _try_rerank(text, hits)
 
     limit = max(1, int(top_k or settings.TOP_K))
-    results = [_to_retrieved(index + 1, hit) for index, hit in enumerate(hits[:limit])]
+    results = [_to_retrieved(index + 1, hit, text) for index, hit in enumerate(hits[:limit])]
 
     logger.info(
         "检索完成：q=%r 命中 %d/%d 条，耗时 %dms（threshold=%.2f, rerank=%s）",
@@ -136,7 +139,7 @@ def retrieve_with_raw(
     )
 
     limit = max(1, int(top_k or settings.TOP_K))
-    raw = [_to_retrieved(index + 1, hit) for index, hit in enumerate(hits[:limit])]
+    raw = [_to_retrieved(index + 1, hit, text) for index, hit in enumerate(hits[:limit])]
 
     threshold = settings.SCORE_THRESHOLD if score_threshold is None else float(score_threshold)
     filtered = [hit for hit in hits if float(hit.get("score", 0.0)) >= threshold]
@@ -145,7 +148,7 @@ def retrieve_with_raw(
     if wants_rerank and filtered:
         filtered = _try_rerank(text, filtered)
 
-    effective = [_to_retrieved(index + 1, hit) for index, hit in enumerate(filtered[:limit])]
+    effective = [_to_retrieved(index + 1, hit, text) for index, hit in enumerate(filtered[:limit])]
 
     logger.info(
         "检索完成（raw/effective）：q=%r 原始 %d 条 / 有效 %d 条，耗时 %dms（threshold=%.2f, rerank=%s）",
@@ -181,7 +184,7 @@ def build_citations(chunks: Sequence[RetrievedChunk]) -> List[Dict[str, Any]]:
             "doc_id": chunk.doc_id,
             "source_file": chunk.source_file,
             "location": chunk.location,
-            "snippet": chunk.content[:200],
+            "snippet": chunk.snippet or chunk.content[:200],
             "score": chunk.score,
             "rerank_score": chunk.rerank_score,
             "chunk_id": chunk.chunk_id,
@@ -203,17 +206,84 @@ def _try_rerank(question: str, hits: List[Dict[str, Any]]) -> List[Dict[str, Any
     return rerank(question, hits)
 
 
-def _to_retrieved(rank: int, hit: Dict[str, Any]) -> RetrievedChunk:
-    """向量库命中 → RetrievedChunk（位置文本走架构 6.5 规则）"""
+def refine_section_citation(
+    question: str,
+    content: str,
+    metadata: Dict[str, Any],
+    fallback_location: str,
+) -> Tuple[str, str]:
+    """（W3-03 / D2-05）多小节切片 → 选中最相关小节，返回（小节级位置文本, 对应原文片段）
+
+    - 依赖 splitter 写入的 ``section_spans`` 元数据（[{title,start,end}]）；
+    - 用字符二元组重合度评分（中文免分词、确定性、微秒级）；
+    - 无多小节信息时返回兜底位置与「前 200 字」片段，行为与旧版一致。
+    """
+    raw = metadata.get("section_spans")
+    if not raw:
+        return fallback_location, content[:200]
+    try:
+        spans = json.loads(raw)
+    except (TypeError, ValueError):
+        return fallback_location, content[:200]
+    if not isinstance(spans, list) or len(spans) < 2:
+        return fallback_location, content[:200]
+
+    best_title, best_text, best_score = "", "", 0.0
+    for span in spans:
+        try:
+            start = max(0, int(span["start"]))
+            end = max(start, int(span["end"]))
+            title = str(span["title"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        text = content[start:end].strip()
+        if not text:
+            continue
+        score = _overlap_score(question, text)
+        if score > best_score:
+            best_title, best_text, best_score = title, text, score
+
+    if best_score <= 0.0:
+        return fallback_location, content[:200]
+    return f"章节「{best_title}」", best_text[:200]
+
+
+def _overlap_score(question: str, text: str) -> float:
+    """字符二元组重合度：|Q∩T| / |Q|（0~1，中文免分词）"""
+    query_pairs = _bigrams(question)
+    if not query_pairs:
+        return 0.0
+    text_pairs = _bigrams(text)
+    if not text_pairs:
+        return 0.0
+    return len(query_pairs & text_pairs) / len(query_pairs)
+
+
+def _bigrams(text: str) -> set:
+    """取纯文字（去空白与标点）的字符二元组集合"""
+    cleaned = re.sub(r"[\s\W_]+", "", text or "")
+    if len(cleaned) < 2:
+        return set()
+    return {cleaned[index : index + 2] for index in range(len(cleaned) - 1)}
+
+
+def _to_retrieved(rank: int, hit: Dict[str, Any], question: str = "") -> RetrievedChunk:
+    """向量库命中 → RetrievedChunk（位置文本走架构 6.5 规则；多小节切片做小节级细化，W3-03）"""
     metadata = hit.get("metadata") or {}
+    content = str(hit.get("content", ""))
+    location = format_location(metadata)
+    snippet = content[:200]
+    if question:
+        location, snippet = refine_section_citation(question, content, metadata, location)
     return RetrievedChunk(
         rank=rank,
         chunk_id=str(hit.get("chunk_id", "")),
         doc_id=str(metadata.get("doc_id", "")),
         source_file=str(metadata.get("filename", "未知文件")),
-        location=format_location(metadata),
-        content=str(hit.get("content", "")),
+        location=location,
+        content=content,
         score=float(hit.get("score", 0.0)),
         rerank_score=hit.get("rerank_score"),
+        snippet=snippet,
         metadata=dict(metadata),
     )
