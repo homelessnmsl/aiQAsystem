@@ -36,3 +36,6 @@ data/*.db
 data/*.sqlite3
 data/eval/*
 !data/eval/.gitkeep
+
+# Gitee 私人令牌文件（本地，禁止提交）
+.gitee_token
