@@ -30,7 +30,7 @@
 | 健康检查：四项依赖 + 台账/向量库对账 | `api/health.py` |
 | 建库脚本同步台账（init_kb / build_kb） | `scripts/` |
 
-### 第3周（W3 DEV，本分支 feature/conversations）
+### 第3周（W3 DEV 交付，已并入 dev）
 
 | 项 | 状态 | 位置 |
 | :--- | :--- | :--- |
@@ -52,13 +52,13 @@
 | 多轮改写：省略式追问补全后再检索（架构 8.2 ①、FR-QA-05）；失败降级原文 | ✅ | `services/rag.py` |
 | 历史恢复：内存为空时从 SQLite 恢复会话历史（服务器重启后仍可续聊） | ✅ | `services/rag.py` |
 | feedback 表与索引（架构 7.2）+ 会话查询/清空台账方法 | ✅ | `services/repository.py` |
-| 离线测试：会话/反馈/多轮改写/降级（总数 116 条） | ✅ | `../tests/` |
+| API-05 `DELETE /api/documents/{doc_id}`：删向量 → 删原始文件 → 台账置 deleted；重复删除安全（1005）（W3-06） | ✅ | `api/documents.py` |
+| 离线测试：会话/反馈/多轮改写/删除文档/降级（全量 125 条） | ✅ | `../tests/` |
 
 ### 仍不在范围（第3周看板待定 / 第4周）
 
-- `/api/ask` 的 `stream=true`（SSE，2.11，按需启用）与 `clarify` 澄清（2.6 实现提示 1）
-- `/api/documents/{doc_id}` 删除（2.5，AD+DEV 协作项，待 W3 看板）
-- Rerank 默认启用与 A/B 调优（`use_rerank` 已预留；实测结论见架构 6.8，默认关闭）
+- `/api/ask` 的 `stream=true`（SSE，2.11；W3-07 在途）与 `clarify` 澄清（2.6 实现提示 1，第4周）
+- Rerank 默认启用与 A/B 调优（`use_rerank` 已预留；实测结论见架构 6.8，默认关闭；W3-04 扩容复核）
 
 ## 二、运行
 
@@ -91,6 +91,7 @@ python -m uvicorn app.main:app --reload --port 8000
 | POST | `/api/chat` | 基础对话（多轮；`stream=true` SSE） | W1 |
 | POST | `/api/upload` | 上传 1~5 个文档并建库 | W2-05 |
 | GET | `/api/documents` | 文档台账列表（分页/过滤） | W2-06 |
+| DELETE | `/api/documents/{doc_id}` | 删除文档及其向量与原始文件（重复删除安全） | W3-06 |
 | POST | `/api/ask` | RAG 问答：答案 + 引用 + 检索明细（多轮改写） | W2-07 / W3 |
 | POST | `/api/feedback` | 答案反馈（up/down + 备注） | W3 |
 | GET | `/api/conversations` | 会话列表（分页 + 标题模糊） | W3 |
@@ -132,6 +133,8 @@ python -m pytest tests/ -q
 - 多轮改写（真实 LLM）：第 1 轮"试用期有多久？"（无历史，不改写）→ 第 2 轮"那转正后呢？"
   被改写为"新员工转正后有什么变化？"后检索作答（改写耗时约 1.5s，含在 retrieval 段计时）
 - 清空：`deleted_messages=4`，详情消息归零，进程内上下文同步清空
+- 删除文档（真实链路）：临时文档上传 → 提问命中并引用 → 删除（`deleted_chunks=1`）→ **检索不再命中**、
+  重复删除返回 1005、台账/向量库计数回到一致（31/10）（W3-06）
 
 ## 六、实现说明与取舍（评审用）
 
