@@ -113,6 +113,52 @@ def render_upload_results(result: Dict[str, Any]) -> None:
         st.caption(f"本次上传：成功 {succeeded} 个，失败 {failed or 0} 个。")
 
 
+def _close_dialog() -> None:
+    """关闭弹窗：整页重跑，确保模态框真的消失（弹窗是 fragment，默认 rerun 只重跑片段）。"""
+    try:
+        st.rerun(scope="app")
+    except TypeError:   # 老版本没有 scope 参数
+        st.rerun()
+
+
+def _do_delete(doc_id: str, filename: str) -> None:
+    """真正执行删除：成功/失败都写一条提示，交给下次运行显示（跨 st.rerun 保留）。"""
+    try:
+        res = client().delete_document(doc_id)
+        st.session_state["flash"] = f"已删除《{filename}》，清理 {res.get('deleted_chunks', '若干')} 个切片。"
+    except ApiError as exc:
+        st.session_state["flash"] = f"删除《{filename}》失败：{exc.display}"
+    refresh_documents()
+    st.session_state["confirm_delete"] = ""
+
+
+if hasattr(st, "dialog"):  # Streamlit ≥ 1.34：用真正的模态弹窗，避免误点
+
+    @st.dialog("确认删除文档")
+    def open_delete_dialog(doc_id: str, filename: str) -> None:
+        st.warning(f"确认删除《{filename}》？删除后其向量不可再被检索，也无法恢复。")
+        st.caption("对应需求 US-10：上传新版制度后删除旧版，避免答案继续引用过期文件。")
+        c1, c2 = st.columns(2)
+        if c1.button("确认删除", type="primary", use_container_width=True, key=f"ok_{doc_id}"):
+            _do_delete(doc_id, filename)
+            _close_dialog()
+        if c2.button("取消", use_container_width=True, key=f"cancel_{doc_id}"):
+            st.session_state["confirm_delete"] = ""
+            _close_dialog()
+
+else:  # 极老版本兜底：页面内联确认
+
+    def open_delete_dialog(doc_id: str, filename: str) -> None:
+        st.warning(f"确认删除《{filename}》？删除后其向量不可再被检索，也无法恢复。")
+        c1, c2, _ = st.columns([1, 1, 6])
+        if c1.button("确认删除", type="primary", key=f"ok_{doc_id}"):
+            _do_delete(doc_id, filename)
+            _close_dialog()
+        if c2.button("取消", key=f"cancel_{doc_id}"):
+            st.session_state["confirm_delete"] = ""
+            _close_dialog()
+
+
 def render_upload() -> None:
     st.subheader("上传文档（US-01 / US-02）")
     uploaded = st.file_uploader(
@@ -193,21 +239,16 @@ def render_documents(docs: List[Dict[str, Any]]) -> None:
             c_status.caption(status_text)
             if c_del.button("删除", key=f"del_{doc_id}", use_container_width=True):
                 st.session_state["confirm_delete"] = doc_id
+                st.rerun()
 
-        if st.session_state.get("confirm_delete") == doc_id:
-            st.warning(f"确认删除《{doc.get('filename', '')}》？删除后其向量将不可再被检索（US-10：上传新版并删除旧版）。")
-            c1, c2, _ = st.columns([1, 1, 6])
-            if c1.button("确认删除", key=f"ok_{doc_id}", type="primary"):
-                try:
-                    res = client().delete_document(doc_id)
-                    st.toast(f"已删除《{doc.get('filename', '')}》，清理 {res.get('deleted_chunks', '若干')} 个切片。", icon="🗑️")
-                except ApiError as exc:
-                    st.error("**删除失败**：" + exc.display)
-                refresh_documents()
-                st.rerun()
-            if c2.button("取消", key=f"cancel_{doc_id}"):
-                st.session_state["confirm_delete"] = ""
-                st.rerun()
+    # 删除确认弹窗（W4-07：用模态弹窗替代行内确认，减少误操作）
+    pending = st.session_state.get("confirm_delete")
+    if pending:
+        target = next((d for d in docs if str(d.get("doc_id")) == str(pending)), None)
+        if target:
+            open_delete_dialog(str(target.get("doc_id")), str(target.get("filename", "")))
+        else:
+            st.session_state["confirm_delete"] = ""
 
 
 def main() -> None:
@@ -216,6 +257,10 @@ def main() -> None:
 
     if is_demo_mode():
         st.warning("当前处于**演示模式**，问答使用预置数据。上传与删除需要真实后端，建议关闭演示模式后操作。")
+
+    flash = st.session_state.pop("flash", "")
+    if flash:
+        st.toast(flash, icon="🗑️")
 
     docs = ensure_documents()
     render_overview(docs)
@@ -231,10 +276,10 @@ def main() -> None:
             """
             - **加载态**：上传用步骤态展示"接收 → 解析入库 → 完成"，单文件结果独立展示，单个失败不影响其他文件；
             - **错误态**：格式/大小/数量在客户端先拦截；列表读取失败给出中文原因与一键重试；
-            - **删除**：二次确认后执行，删除后自动刷新列表与概况；
+            - **删除**：点删除弹出模态确认框（Streamlit 1.34+ 的 `st.dialog`），确认后自动刷新列表与概况；
             - **待完善**：上传进度百分比需要后端返回逐文件进度（当前为同步接口，只能给步骤态）。
             """
         )
 
-
-main()
+if __name__ == "__main__":  # 与 app.py 保持一致，便于被导入做测试
+    main()

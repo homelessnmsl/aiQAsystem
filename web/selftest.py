@@ -115,6 +115,10 @@ def test_chat_page() -> None:
           str([ta.label for ta in at4.text_area]))
     cancel = next((b for b in at4.button if b.label == "取消"), None)
     check("点踩原因可取消", cancel is not None)
+    check("侧栏有会话导出按钮（FR-CONV-03）",
+          any("导出" in getattr(d, "label", "") for d in at4.get("download_button")))
+    check("侧栏有流式回答开关（W4-07）", any("流式回答" in tg.label for tg in at4.toggle))
+    check("演示模式下流式开关被禁用", all(tg.disabled for tg in at4.toggle if "流式回答" in tg.label))
 
 
 def test_kb_page() -> None:
@@ -154,10 +158,31 @@ def test_api_client() -> None:
     check("客户端先校验格式与大小（US-02）", len(problems) == 2, str(problems))
 
 
+def test_export() -> None:
+    print("\n[附加] 会话导出（FR-CONV-03）：内容必须含问题、答案与引用")
+    from app import session_to_markdown
+
+    messages = [
+        {"role": "user", "content": "公司年假有多少天？"},
+        {"role": "assistant", "answer": "满 1 年不满 10 年 5 天 [1]。", "citations": [
+            {"index": 1, "source_file": "01_员工手册.pdf", "location": "第 3 页",
+             "snippet": "员工累计工作满 1 年不满 10 年的，每年享有 5 天年假", "score": 0.6155},
+        ]},
+    ]
+    md = session_to_markdown("conv_test_001", messages, "2026-10-24 10:00")
+    check("导出含会话信息", "conv_test_001" in md and "2026-10-24 10:00" in md and "1 轮问答" in md)
+    check("导出含问题", "公司年假有多少天？" in md)
+    check("导出含答案", "5 天" in md)
+    check("导出含引用（文件名 + 位置 + 原文）",
+          "01_员工手册.pdf" in md and "第 3 页" in md and "每年享有 5 天年假" in md, md[:160])
+    check("空会话导出有明确提示", "还没有问答内容" in session_to_markdown("conv_empty", []))
+
+
 if __name__ == "__main__":
     test_chat_page()
     test_kb_page()
     test_api_client()
+    test_export()
     print("\n" + "=" * 56)
     if FAILURES:
         print(f"❌ 未通过 {len(FAILURES)} 项：" + "；".join(FAILURES))

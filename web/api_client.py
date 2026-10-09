@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import requests
 
@@ -198,6 +198,62 @@ class ApiClient:
         """API-02 ``POST /api/chat``：基础对话（第1周打通 DeepSeek 用）。"""
         data = self._request("POST", "/api/chat", json={"message": question, "session_id": session_id or None})
         return _normalize_answer(data)
+
+    def stream_ask(self, question: str, session_id: str = "") -> Iterator[Dict[str, Any]]:
+        """API-07 流式问答（接口文档 2.11）：逐事件产出 ``retrieval`` / ``delta`` / ``done`` / ``error``。
+
+        两条实测要点：
+        1. 流式响应**不走**统一响应包裹（``Content-Type: text/event-stream``）；
+           准备阶段失败（如空问题、空库）仍返回普通 JSON，这里会识别并抛 :class:`ApiError`；
+        2. ``delta`` 粒度很细（实测按字下发），调用方需要自己做节流，别每字重绘。
+        """
+        body: Dict[str, Any] = {"question": question, "session_id": session_id or None, "stream": True}
+        try:
+            resp = self.session.post(self._url("/api/ask"), json=body, stream=True, timeout=self.timeout)
+        except requests.exceptions.Timeout as exc:
+            raise ApiError(code="timeout", message="请求超时", hint="后端响应太慢，请稍后重试。") from exc
+        except requests.exceptions.RequestException as exc:
+            raise _offline_error(exc) from exc
+
+        content_type = resp.headers.get("Content-Type") or ""
+        if "text/event-stream" not in content_type:
+            # 准备阶段失败：仍是统一响应，交给 _unwrap 抛中文错误
+            try:
+                payload = resp.json()
+            except ValueError as exc:
+                raise ApiError(code="bad_response", message="后端未按流式协议返回",
+                               hint=f"HTTP {resp.status_code}，请稍后重试。") from exc
+            finally:
+                resp.close()
+            self._unwrap(payload, resp.status_code)
+            raise ApiError(code="bad_response", message="后端未按流式协议返回", hint="请稍后重试。")
+
+        try:
+            for raw in resp.iter_lines(decode_unicode=True):
+                if not raw:
+                    continue
+                line = raw.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(data)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get("type") == "retrieval":
+                    event = dict(event)
+                    event["citations"] = [
+                        _normalize_citation(c, i + 1)
+                        for i, c in enumerate(event.get("citations") or [])
+                        if isinstance(c, dict)
+                    ]
+                yield event
+        finally:
+            resp.close()
 
     def upload(self, files: Sequence[Tuple[str, bytes, str]]) -> Dict[str, Any]:
         """API-03 ``POST /api/upload``：上传文档建库（multipart，失败隔离）。"""
