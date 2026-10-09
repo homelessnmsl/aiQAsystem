@@ -73,3 +73,37 @@ def test_conversation_and_messages(tmp_path):
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert messages[1]["latency_ms"] == 123
     assert messages[1]["citations"] == "[]"
+
+
+def test_conversation_queries_and_feedback(tmp_path):
+    """W3：会话列表/详情/清空与反馈（接口文档 2.7~2.10）"""
+    repo = _repo(tmp_path)
+    repo.ensure_conversation("conv_a", title="年假问题")
+    repo.add_message(message_id="m1", session_id="conv_a", role="user", content="年假？",
+                     created_at="2026-10-09T10:00:00+08:00")
+    repo.add_message(message_id="m2", session_id="conv_a", role="assistant", content="5 天 [1]",
+                     citations="[]", created_at="2026-10-09T10:00:02+08:00")
+    repo.ensure_conversation("conv_b", title="报销问题")
+
+    total, items = repo.list_conversations()
+    assert total == 2
+    by_id = {item["session_id"]: item for item in items}
+    assert by_id["conv_a"]["message_count"] == 2
+    assert by_id["conv_b"]["message_count"] == 0
+
+    total_kw, keyword_items = repo.list_conversations(keyword="年假")
+    assert total_kw == 1 and keyword_items[0]["session_id"] == "conv_a"
+
+    assert repo.get_conversation("conv_a")["title"] == "年假问题"
+    assert repo.get_conversation("nope") is None
+    assert repo.get_message("m1")["role"] == "user"
+    assert repo.get_message("nope") is None
+
+    assert repo.clear_messages("conv_a") == 2
+    assert repo.list_messages("conv_a") == []
+    assert repo.clear_messages("conv_a") == 0
+
+    repo.add_feedback(feedback_id="fb_1", message_id="m2", session_id="conv_a", rating="down",
+                      comment="太短", created_at="2026-10-09T10:01:00+08:00")
+    row = repo._conn.execute("SELECT * FROM feedback WHERE feedback_id = 'fb_1'").fetchone()
+    assert row["rating"] == "down" and row["comment"] == "太短"
