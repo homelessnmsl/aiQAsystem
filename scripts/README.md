@@ -24,3 +24,4 @@ python scripts/download_model.py                       # 首次使用本地模�
 - `issues_batch.json`：35 条 Issue 数据（第1周18 + 第2周17），由周任务清单生成
 - `upload_issues.py`：幂等上传（按标题判重）；`--dry-run` 预演；令牌经 `--token` / `GITEE_TOKEN` 环境变量 / 仓库根 `.gitee_token` 文件提供（该文件已被 .gitignore 忽略）
 - 用法：`python scripts/upload_issues.py --dry-run`；真实上传：`python scripts/upload_issues.py --token <私人令牌>`
+- `sync_issue_states.py`：按 `issues_batch.json` 的 status 同步 Gitee Issue 状态（✅→已完成，其余保持打开）；`--dry-run` 预演，幂等可复跑
