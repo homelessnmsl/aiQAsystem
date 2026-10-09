@@ -111,3 +111,53 @@ def test_retrieve_uses_rerank_hook_when_enabled(store: VectorStore, provider: Fa
     chunks = retrieve("年假", provider=provider, store=store, use_rerank=True, score_threshold=0.5)
     assert chunks and calls.get("used")
     assert chunks[0].rerank_score is not None
+
+def test_refine_section_citation_picks_matching_section():
+    """W3-03：多小节切片按问题命中度选中小节，并返回该小节原文片段"""
+    import json
+
+    from app.services.retrieval import refine_section_citation
+
+    part_a = "忘记密码：在登录页点击忘记密码，通过手机验证码自助重置。"
+    part_b = "出差申请：出差需提前 3 个工作日提交申请，未提前申请不予报销。"
+    content = f"{part_a}\n{part_b}"
+    spans = [
+        {"title": "FAQ > 5. 忘记密码怎么办？", "start": 0, "end": len(part_a)},
+        {"title": "FAQ > 6. 出差需要提前多久申请？", "start": len(part_a) + 1, "end": len(content)},
+    ]
+    metadata = {"section_spans": json.dumps(spans, ensure_ascii=False)}
+
+    location, snippet = refine_section_citation("出差需要提前多久提交申请？", content, metadata, "章节「FAQ」")
+    assert location == "章节「FAQ > 6. 出差需要提前多久申请？」"
+    assert "提前 3 个工作日" in snippet
+
+
+def test_refine_section_citation_falls_back_without_spans():
+    """无 section_spans 时保持旧行为（兜底位置 + 前 200 字片段）"""
+    from app.services.retrieval import refine_section_citation
+
+    content = "普通切片内容" * 30
+    location, snippet = refine_section_citation("随便问问", content, {}, "第 3 页")
+    assert location == "第 3 页"
+    assert snippet == content[:200]
+
+
+def test_retrieve_returns_section_level_location(store: VectorStore, provider: FakeEmbedding):
+    """端到端：多小节切片入库后，检索位置细化到具体小节（D2-05）"""
+    doc = ParsedDocument(
+        filename="FAQ.md",
+        file_type="md",
+        blocks=[
+            Block(text="忘记密码：在登录页点击忘记密码，通过手机验证码重置。", section="FAQ > 5. 忘记密码怎么办？"),
+            Block(text="出差申请：年假期间出差需提前 3 个工作日提交申请。", section="FAQ > 6. 出差需要提前多久申请？"),
+        ],
+    )
+    chunks = split_document(doc, "doc_20261009_000012")
+    assert len(chunks) == 1, "两个短小节应合并为一个切片（跨章节合并默认开启）"
+    store.add_chunks(chunks, provider.embed_documents([chunk.content for chunk in chunks]))
+
+    result = retrieve("年假期间出差要提前多久申请？", provider=provider, store=store, score_threshold=0.0)
+    assert result
+    top = result[0]
+    assert top.location == "章节「FAQ > 6. 出差需要提前多久申请？」"
+    assert "提前 3 个工作日" in top.snippet

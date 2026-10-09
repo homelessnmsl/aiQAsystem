@@ -71,3 +71,35 @@ def test_short_blocks_are_merged():
     chunks = split_document(doc, "doc_test_000004")
     assert len(chunks) == 1
     assert "年假" in chunks[0].content and "15 天" in chunks[0].content
+
+def test_multi_section_chunk_records_section_spans():
+    """W3-03：跨小节合并的切片应记录 section_spans，且偏移能切片出对应小节文本"""
+    import json
+
+    blocks = [
+        Block(text="年假：入职满 1 年每年 5 天，满 10 年 10 天。", section="2.1 年假"),
+        Block(text="年假申请：提前 3 个工作日提交，直属上级审批。", section="2.2 年假申请"),
+    ]
+    doc = ParsedDocument(filename="制度.md", file_type="md", blocks=blocks)
+    chunks = split_document(doc, "doc_test_000010")
+
+    assert len(chunks) == 1, "两个短小节应合并为一个切片"
+    raw = chunks[0].metadata.get("section_spans")
+    assert raw, "合并切片应带 section_spans 元数据"
+    spans = json.loads(raw)
+    assert [span["title"] for span in spans] == ["2.1 年假", "2.2 年假申请"]
+
+    text = chunks[0].content
+    assert "入职满 1 年" in text[spans[0]["start"] : spans[0]["end"]]
+    assert "提前 3 个工作日" in text[spans[1]["start"] : spans[1]["end"]]
+
+
+def test_single_section_chunk_has_no_section_spans():
+    """单小节切片不写 section_spans（避免冗余元数据）"""
+    doc = ParsedDocument(
+        filename="单节.md",
+        file_type="md",
+        blocks=[Block(text="只有一个小节的内容。", section="1. 唯一小节")],
+    )
+    chunks = split_document(doc, "doc_test_000011")
+    assert "section_spans" not in chunks[0].metadata
