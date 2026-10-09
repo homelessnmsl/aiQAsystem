@@ -131,9 +131,23 @@ class DeepSeekClient(BaseLLM):
             except APIError as exc:
                 raise _to_biz_error(exc) from exc
 
-        content = (response.choices[0].message.content or "").strip()
+        message = response.choices[0].message
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+        content = (message.content or "").strip()
+
+        # 推理模型（如 deepseek-v4-pro）会返回 reasoning_content（思维链）：
+        # 思维链仅记日志、绝不对外返回，也不参与后续消息拼接（防泄漏、防回灌）。
+        reasoning = getattr(message, "reasoning_content", None)
+        if reasoning:
+            logger.debug("模型输出思维链 %d 字（不对外返回）", len(reasoning))
+
         if not content:
+            if finish_reason == "length":
+                # 思维链计入 max_tokens 预算：被截断在思考阶段时 content 为空
+                raise BizError(CODE_LLM_BAD_RESPONSE, "回答生成被截断（长度限制），请精简问题或稍后重试")
             raise BizError(CODE_LLM_BAD_RESPONSE, "回答生成异常，请重试")
+        if finish_reason == "length":
+            logger.warning("回答因长度限制被截断（内容可能不完整）")
 
         usage = getattr(response, "usage", None)
         return LLMResult(
@@ -153,7 +167,13 @@ class DeepSeekClient(BaseLLM):
         max_tokens: int | None = None,
         **kwargs,
     ) -> Iterator[str]:
-        """流式对话：逐块产出内容片段（异常翻译规则同 chat）"""
+        """流式对话：逐块产出内容片段（异常翻译规则同 chat）
+
+        推理模型（如 deepseek-v4-pro）会先流式输出 reasoning_content（思维链）再输出正文：
+        思维链一律跳过（不下发给用户）；若整条流没有任何正文（如预算被思维链耗尽）则抛 3004。
+        """
+        produced = False
+        reasoning_chars = 0
         try:
             stream = self.client.chat.completions.create(
                 model=self.model,
@@ -163,10 +183,20 @@ class DeepSeekClient(BaseLLM):
             )
             for chunk in stream:
                 delta = chunk.choices[0].delta if chunk.choices else None
-                if delta and delta.content:
+                if not delta:
+                    continue
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    reasoning_chars += len(reasoning)  # 思维链：只统计，不下发
+                if delta.content:
+                    produced = True
                     yield delta.content
         except APIError as exc:
             raise _to_biz_error(exc) from exc
+        if reasoning_chars:
+            logger.debug("模型流式思维链 %d 字（未下发）", reasoning_chars)
+        if not produced:
+            raise BizError(CODE_LLM_BAD_RESPONSE, "回答生成异常，请重试")
 
 
 #: 全局 LLM 客户端（懒加载单例；调用前先判断 settings.llm_configured）
