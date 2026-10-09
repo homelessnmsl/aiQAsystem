@@ -83,3 +83,11 @@ def test_broken_pdf_raises_parse_error(tmp_path: Path):
         load_document(broken)
     assert excinfo.value.code == CODE_PARSE_FAILED
     assert "broken.pdf" in excinfo.value.message
+
+def test_markdown_table_is_rendered_as_natural_language():
+    """D2-01 回归：Markdown 表格渲染为「键：值」自然语言行（管道符与分隔行不进入文本）"""
+    doc = load_document(SAMPLES / "10_公司简介与组织架构.md")
+    text = "\n".join(block.text for block in doc.blocks)
+    assert "|" not in text, "表格管道符不应进入切片文本"
+    assert ":---" not in text, "表格分隔行不应进入切片文本"
+    assert "总部地址：浙江省杭州市滨江区" in text
