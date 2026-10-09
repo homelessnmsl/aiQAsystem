@@ -38,7 +38,7 @@ def render_citations(citations: List[Dict[str, Any]]) -> None:
     if not citations:
         st.caption("本条回答没有引用来源（未在知识库中找到依据）。")
         return
-    st.caption(f"📎 引用来源（{len(citations)}）— 点开可核对原文")
+    st.caption(f"📎 引用来源（{len(citations)}）— 编号与答案中的 [n] 一致，点开可核对原文")
     for i, cite in enumerate(citations, start=1):
         index = cite.get("index", i)
         file_name = cite.get("source_file") or "未知来源"
@@ -46,10 +46,14 @@ def render_citations(citations: List[Dict[str, Any]]) -> None:
         score = cite.get("score")
         title = f"[{index}]  📄 {file_name}"
         if location:
-            title += f" · {location}"
+            # 位置可能很长（如 Markdown 章节链），折叠条标题只留前 36 字，完整内容在展开区
+            short_location = location if len(location) <= 36 else location[:36] + "…"
+            title += f" · {short_location}"
         if isinstance(score, (int, float)):
             title += f" · 相关度 {score:.2f}"
         with st.expander(title):
+            if location:
+                st.caption(f"完整位置：{location}")
             snippet = cite.get("snippet") or "（该引用未返回原文片段）"
             st.markdown(f"> {snippet}")
             meta = []
@@ -83,6 +87,8 @@ def render_answer_meta(message: Dict[str, Any]) -> None:
     """一行元信息：耗时 / trace_id / 模型（FR-OPS-04）。"""
     parts = []
     latency = message.get("latency_ms")
+    if isinstance(latency, dict):  # 接口文档 2.6：latency_ms 为分段耗时，取 total
+        latency = latency.get("total")
     if isinstance(latency, (int, float)):
         parts.append(f"耗时 {latency / 1000:.1f}s")
     if message.get("model"):

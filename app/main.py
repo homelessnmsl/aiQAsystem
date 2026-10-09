@@ -8,7 +8,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import chat, health
+from .api import ask, chat, documents, health, upload
 from .core.config import settings
 from .core.errors import register_exception_handlers
 from .core.logging import setup_logging
@@ -36,9 +36,12 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
-    # 路由注册（第2周补 /api/upload、/api/documents、/api/ask）
+    # 路由注册（第2周：/api/upload、/api/documents、/api/ask）
     app.include_router(health.router)
     app.include_router(chat.router)
+    app.include_router(upload.router)
+    app.include_router(documents.router)
+    app.include_router(ask.router)
 
     @app.get("/", tags=["health"], summary="服务存活探针")
     async def root() -> dict:
