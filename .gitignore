@@ -39,3 +39,7 @@ data/eval/*
 
 # Gitee 私人令牌文件（本地，禁止提交）
 .gitee_token
+
+# W3-04 扩容实验产物（由 scripts/generate_corpus.py 生成）
+data/corpus_*/
+data/chroma_*/
