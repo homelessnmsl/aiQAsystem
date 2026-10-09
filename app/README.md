@@ -24,7 +24,7 @@
 | API-03 `POST /api/upload`：白名单/大小/数量校验 → 落盘 → 解析入库 → 台账；逐文件失败隔离；全部失败 2002 | ✅ | `api/upload.py` |
 | API-04 `GET /api/documents`：分页/关键字/格式/状态过滤，字段对齐 2.4 | ✅ | `api/documents.py` |
 | API-06 `POST /api/ask`：检索 → Prompt 渲染（PE 模板）→ 生成 → 引用装配 → 落库 | ✅ | `services/rag.py`、`api/ask.py` |
-| 引用规则：citations 只保留答案实际引用的 `[n]`；未用编号 → 降级 not_found（架构 6.9） | ✅ | `services/rag.py` |
+| 引用规则：citations 只保留答案实际引用的 `[n]`；未用编号 → 降级 not_found（架构 6.9）；对外编号连续 1..N（D2-02 方案B） | ✅ | `services/rag.py` |
 | 兜底：无有效候选 / 空库 → 不调用 LLM（2001 / not_found，接口文档 2.6） | ✅ | `services/rag.py` |
 | SQLite 台账：documents / conversations / messages（架构 7.2） | ✅ | `services/repository.py` |
 | 检索明细扩展：retrieve_with_raw 返回 (raw, effective)，retrieved[] 供 PE 统计 M-01 | ✅ | `services/retrieval.py` |

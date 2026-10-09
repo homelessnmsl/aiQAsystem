@@ -114,6 +114,26 @@ def _referenced_indices(answer: str, max_index: int) -> set:
     }
 
 
+def _renumber_citations(answer: str, referenced: set) -> tuple:
+    """对外引用编号连续化（D2-02 方案B，2026-10-09 定稿）
+
+    模型看到的上下文编号为 1..N（连续），但答案可能只引用其中部分（如 [1][3]）。
+    对外返回时按答案中首次出现的顺序重排为连续 [1][2]…，citations 的 index 同步重排；
+    溯源字段（doc_id/source_file/location/snippet/chunk_id）保持不变。
+    """
+    order: list = []
+    for match in re.finditer(r"\[(\d+)\]", answer):
+        index = int(match.group(1))
+        if index in referenced and index not in order:
+            order.append(index)
+    mapping = {old: new for new, old in enumerate(order, start=1)}
+
+    def _replace(match: re.Match) -> str:
+        index = int(match.group(1))
+        return f"[{mapping.get(index, index)}]"
+
+    return re.sub(r"\[(\d+)\]", _replace, answer), mapping
+
 def answer_question(
     *,
     question: str,
@@ -182,8 +202,15 @@ def answer_question(
             logger.warning("模型未使用引用编号，按架构 6.9 降级为 not_found：trace=%s", trace_id)
             answer, answer_type, citations = NOT_FOUND_ANSWER, "not_found", []
         else:
-            # citations 只保留模型实际引用的 [n]（架构 6.9：依据实际引用生成，防伪造来源）
-            citations = [item for item in effective_citations if item["index"] in referenced]
+            # D2-02 方案B：对外引用编号连续化（按答案中首次出现顺序重排 [1][2]…）
+            answer, citation_map = _renumber_citations(answer, referenced)
+            # citations 只保留模型实际引用的片段，index 同步为连续编号（架构 6.9：依据实际引用生成，防伪造来源）
+            citations = [
+                {**item, "index": citation_map[item["index"]]}
+                for item in effective_citations
+                if item["index"] in referenced
+            ]
+            citations.sort(key=lambda item: item["index"])
             answer_type = "answered"  # clarify（澄清）第3周实现（接口文档 2.6 实现提示 1）
             model = llm_result.model
             usage = vars(llm_result.usage)
