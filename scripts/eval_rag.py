@@ -81,6 +81,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("--out", default=None, help="逐条明细 JSON 输出路径")
     parser.add_argument("--report", default=None, help="Markdown 报告草稿输出路径")
     parser.add_argument("--limit", type=int, default=None, help="只跑前 N 条（调试用）")
+    parser.add_argument("--repeat", type=int, default=1, help="整集重复采样次数（稳定性复核，默认 1）")
     parser.add_argument("--sleep", type=float, default=0.3, help="逐条调用间隔（秒）")
     return parser.parse_args(argv)
 
@@ -596,6 +597,34 @@ def build_report(run: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def print_repeat_summary(run: Dict[str, Any]) -> None:
+    """多次采样汇总：指标 min/avg/max + 逐条稳定性 + 答案长度分布。"""
+    metrics_list = run.get("repeat_metrics") or []
+    if len(metrics_list) < 2:
+        return
+
+    def stat(key: str, suffix: str = "") -> str:
+        values = [m.get(key) for m in metrics_list if m.get(key) is not None]
+        if not values:
+            return "—"
+        return f"{min(values):.1f} / {sum(values) / len(values):.1f} / {max(values):.1f}{suffix}"
+
+    print("\n== 多次采样汇总（min / avg / max） ==")
+    print(f"M-01 命中率（轮级）：{stat('m01_rate', '%')}")
+    print(f"M-03 自动预评均分：{stat('m03_avg')}")
+    print(f"M-04 拒答率：{stat('m04_rate', '%')}")
+    print(f"端到端中位时延：{stat('latency_median_ms', 'ms')}")
+    print("\n逐条稳定性（M-01 命中次数 | 预评分序列 | 长度区间 | 超 200 字数）：")
+    for item_id, stats in run["per_item_stats"].items():
+        hits = stats["m01"]
+        hit_text = f"{sum(hits)}/{len(hits)}" if hits else "—"
+        scores = stats["scores"]
+        score_text = "/".join(str(s) for s in scores) if scores else "—"
+        lengths = stats["lengths"]
+        length_text = f"{min(lengths)}~{max(lengths)}" if lengths else "—"
+        print(f"  {item_id:8} M-01 {hit_text:5} 预评分 {score_text:14} 长度 {length_text:10} 超200：{stats['over200']}")
+
+
 def print_summary(run: Dict[str, Any]) -> None:
     """打印逐条结果与控制台指标汇总（多轮集显示重复率）。"""
     metrics = run["metrics"]
@@ -639,10 +668,9 @@ def print_summary(run: Dict[str, Any]) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """脚本入口：选择运行模式，逐条评测并输出明细与指标。"""
+    """脚本入口：选择运行模式，逐条评测并输出明细与指标（--repeat N 做多次采样）。"""
     args = parse_args(sys.argv[1:] if argv is None else argv)
     dataset_path = Path(args.dataset).resolve()
-    records = load_dataset(dataset_path, args.limit)
     mode = args.mode
 
     system_prompt = template = None
@@ -664,29 +692,55 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         client = get_llm_client()
 
+    iterations = max(1, int(args.repeat))
     run: Dict[str, Any] = {
         "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "mode": mode,
         "dataset": str(dataset_path),
         "history_style": args.history_style if mode == "offline" else "api",
         "rewrite": args.rewrite if mode == "offline" else "api",
+        "repeat": iterations,
         "records": [],
     }
-    for index, record in enumerate(records, start=1):
-        print(f"[{index}/{len(records)}] {record['id']} {record['question']}")
-        if mode == "retrieval":
-            turns = run_retrieval(record, args)
-        elif mode == "offline":
-            turns = run_offline(record, args, client, system_prompt, template)
-        else:
-            turns = run_api(record, args)
-        record["turns"] = turns
-        run["records"].append(record)
-        if args.sleep:
-            time.sleep(args.sleep)
+    repeat_metrics: List[Dict[str, Any]] = []
+    per_item: Dict[str, Dict[str, Any]] = {}
+    for iteration in range(1, iterations + 1):
+        if iterations > 1:
+            print(f"—— 第 {iteration}/{iterations} 次采样 ——")
+        records = load_dataset(dataset_path, args.limit)
+        for index, record in enumerate(records, start=1):
+            print(f"[{index}/{len(records)}] {record['id']} {record['question']}")
+            if mode == "retrieval":
+                turns = run_retrieval(record, args)
+            elif mode == "offline":
+                turns = run_offline(record, args, client, system_prompt, template)
+            else:
+                turns = run_api(record, args)
+            record["turns"] = turns
+            if args.sleep:
+                time.sleep(args.sleep)
+        metrics = compute_metrics(records, mode)
+        repeat_metrics.append(metrics)
+        for record in records:
+            stats = per_item.setdefault(record["id"], {"m01": [], "scores": [], "lengths": [], "over200": 0})
+            if record.get("m01_hit") is not None:
+                stats["m01"].append(bool(record["m01_hit"]))
+            if record.get("auto_score") is not None:
+                stats["scores"].append(record["auto_score"])
+            for turn in record["turns"]:
+                answer = turn.get("answer") or ""
+                if answer and turn.get("answer_type") != "not_found":
+                    stats["lengths"].append(len(answer))
+                    if len(answer) > 200:
+                        stats["over200"] += 1
+        run["records"] = records
 
-    run["metrics"] = compute_metrics(run["records"], mode)
+    run["metrics"] = repeat_metrics[-1]
+    run["repeat_metrics"] = repeat_metrics
+    run["per_item_stats"] = per_item
     print_summary(run)
+    if iterations > 1:
+        print_repeat_summary(run)
 
     out_path = Path(args.out) if args.out else DEFAULT_OUT_DIR / f"eval_rag_{dataset_path.stem}_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
