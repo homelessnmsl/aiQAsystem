@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from string import Template
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from ..core.config import BASE_DIR, settings
 from ..core.errors import CODE_KB_EMPTY, CODE_LLM_NO_KEY, BizError
@@ -64,6 +64,23 @@ class RAGResult:
     latency_ms: Dict[str, int] = field(default_factory=dict)
     created_at: str = ""
     rewritten_question: Optional[str] = None
+
+
+@dataclass
+class StreamPrep:
+    """流式问答的准备阶段结果（检索已完成，等待逐块生成，接口文档 2.11）"""
+
+    trace_id: str
+    session_id: str
+    message_id: str
+    question: str
+    rewritten_question: Optional[str]
+    history_entries: List[Dict[str, str]]
+    retrieved: List[Dict[str, Any]]
+    citations: List[Dict[str, Any]]  # retrieval 事件携带：全部有效候选，编号 1..N 连续
+    effective: List[Any]             # List[RetrievedChunk]，生成与落库用
+    latency: Dict[str, int]          # total / retrieval / rerank / generation
+    started: float
 
 
 def _read_prompt(path: Path, fallback: str) -> str:
@@ -185,6 +202,44 @@ def _renumber_citations(answer: str, referenced: set) -> tuple:
 
     return re.sub(r"\[(\d+)\]", _replace, answer), mapping
 
+
+def _persist_qa(
+    *,
+    session_id: str,
+    trace_id: str,
+    message_id: str,
+    question: str,
+    answer: str,
+    citations: List[Dict[str, Any]],
+    latency_ms: int,
+) -> str:
+    """落库（SQLite messages + 会话行）+ 内存上下文；同步 / 流式路径共用，返回 created_at"""
+    created_at = now_iso()
+    repository = get_repository()
+    repository.ensure_conversation(session_id, title=question[:20])
+    repository.add_message(
+        message_id=new_message_id(),
+        session_id=session_id,
+        role="user",
+        content=question,
+        trace_id=trace_id,
+        created_at=created_at,
+    )
+    repository.add_message(
+        message_id=message_id,
+        session_id=session_id,
+        role="assistant",
+        content=answer,
+        citations=json.dumps(citations, ensure_ascii=False),
+        trace_id=trace_id,
+        latency_ms=latency_ms,
+        created_at=created_at,
+    )
+    conversation_store.append(session_id, "user", question)
+    conversation_store.append(session_id, "assistant", answer)
+    return created_at
+
+
 def answer_question(
     *,
     question: str,
@@ -279,31 +334,16 @@ def answer_question(
         "rerank": 0,  # 当前 retrieval 已含重排耗时；第3周启用重排后拆分计时
         "generation": generation_ms,
     }
-    created_at = now_iso()
-
-    # 3. 落库（SQLite messages）+ 内存上下文（第3周多轮追问复用）
-    repository = get_repository()
-    repository.ensure_conversation(session_id, title=question[:20])
-    repository.add_message(
-        message_id=new_message_id(),
+    # 3. 落库（SQLite messages）+ 内存上下文（同步 / 流式共用）
+    created_at = _persist_qa(
         session_id=session_id,
-        role="user",
-        content=question,
         trace_id=trace_id,
-        created_at=created_at,
-    )
-    repository.add_message(
         message_id=message_id,
-        session_id=session_id,
-        role="assistant",
-        content=answer,
-        citations=json.dumps(citations, ensure_ascii=False),
-        trace_id=trace_id,
+        question=question,
+        answer=answer,
+        citations=citations,
         latency_ms=latency["total"],
-        created_at=created_at,
     )
-    conversation_store.append(session_id, "user", question)
-    conversation_store.append(session_id, "assistant", answer)
 
     logger.info(
         "问答完成：trace=%s type=%s 总耗时 %dms（检索 %d / 生成 %d）",
@@ -324,3 +364,156 @@ def answer_question(
         created_at=created_at,
         rewritten_question=rewritten_question,
     )
+
+
+# ============================================================
+# 流式问答（接口文档 2.11；W3-07）
+# ============================================================
+def prepare_stream(
+    *,
+    question: str,
+    session_id: str,
+    trace_id: str,
+    top_k: Optional[int] = None,
+    score_threshold: Optional[float] = None,
+    use_rerank: Optional[bool] = None,
+) -> StreamPrep:
+    """流式准备阶段：空库校验 → 多轮改写 → 检索（同步执行，失败按 1.4 统一 JSON 错误返回）
+
+    准备阶段完成后才开始下发 SSE 事件；此阶段抛出 BizError 由 API 层按统一响应处理。
+    """
+    started = time.perf_counter()
+
+    if knowledge_is_empty():
+        raise BizError(CODE_KB_EMPTY, "知识库为空，请先上传文档")
+
+    history_entries = _history_entries(session_id)
+    retrieval_started = time.perf_counter()
+    rewritten_question = _rewrite_question(question, history_entries)
+    search_question = rewritten_question or question
+    raw_chunks, effective = retrieve_with_raw(
+        search_question, top_k=top_k, score_threshold=score_threshold, use_rerank=use_rerank
+    )
+    retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
+
+    if effective and not settings.llm_configured:
+        raise BizError(CODE_LLM_NO_KEY, "服务未配置模型密钥，请联系管理员")
+
+    retrieved = [
+        {
+            "rank": chunk.rank,
+            "chunk_id": chunk.chunk_id,
+            "doc_id": chunk.doc_id,
+            "source_file": chunk.source_file,
+            "location": chunk.location,
+            "snippet": chunk.content[:200],
+            "score": chunk.score,
+            "rerank_score": chunk.rerank_score,
+        }
+        for chunk in raw_chunks
+    ]
+    return StreamPrep(
+        trace_id=trace_id,
+        session_id=session_id,
+        message_id=new_message_id(),
+        question=question,
+        rewritten_question=rewritten_question,
+        history_entries=history_entries,
+        retrieved=retrieved,
+        citations=build_citations(effective),
+        effective=effective,
+        latency={
+            "total": int((time.perf_counter() - started) * 1000),
+            "retrieval": retrieval_ms,
+            "rerank": 0,
+            "generation": 0,
+        },
+        started=started,
+    )
+
+
+def stream_events(prep: StreamPrep) -> Iterator[Dict[str, Any]]:
+    """生成 SSE 事件流（接口文档 2.11）：retrieval → delta* → done；异常时以 error 收尾
+
+    - retrieval 事件先发（前端可先渲染引用卡片；citations 为全部有效候选，编号 1..N 连续）；
+    - 无有效候选 → 单条 delta（固定兜底话术）+ done（不调用 LLM，usage=null）；
+    - 生成中异常 → error 事件收尾（不落库；done / error 必为最后一个事件）；
+    - 流式路径无法事后重排/降级（已下发内容不可回撤）：落库内容与下发一致，
+      越界/未引用编号仅记日志（质量护栏，PE 评测关注）；同步路径保持 6.9 / D2-02 语义。
+    """
+    yield {
+        "type": "retrieval",
+        "trace_id": prep.trace_id,
+        "session_id": prep.session_id,
+        "message_id": prep.message_id,
+        "retrieved": prep.retrieved,
+        "citations": prep.citations,
+    }
+
+    # 无有效候选：不调用 LLM（接口文档 2.6 实现提示 4）
+    if not prep.effective:
+        answer = NOT_FOUND_ANSWER
+        yield {"type": "delta", "content": answer}
+        prep.latency["total"] = int((time.perf_counter() - prep.started) * 1000)
+        _persist_qa(
+            session_id=prep.session_id,
+            trace_id=prep.trace_id,
+            message_id=prep.message_id,
+            question=prep.question,
+            answer=answer,
+            citations=[],
+            latency_ms=prep.latency["total"],
+        )
+        yield {"type": "done", "usage": None, "latency_ms": prep.latency}
+        return
+
+    context = build_context(prep.effective)
+    prompt = render_prompt(
+        history=_format_history(prep.history_entries),
+        context=context,
+        question=prep.question,
+    )
+    system_prompt = _read_prompt(SYSTEM_RAG_FILE, _FALLBACK_SYSTEM)
+
+    generation_started = time.perf_counter()
+    parts: List[str] = []
+    try:
+        for chunk in get_llm_client().stream_chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ]
+        ):
+            parts.append(chunk)
+            yield {"type": "delta", "content": chunk}
+    except BizError as exc:
+        # 生成中失败：不落库、不发 done（error 必为最后一个事件）
+        logger.warning("流式生成失败：trace=%s code=%s %s", prep.trace_id, exc.code, exc.message)
+        yield {"type": "error", "code": exc.code, "message": exc.message}
+        return
+
+    answer = "".join(parts).strip()
+    prep.latency["generation"] = int((time.perf_counter() - generation_started) * 1000)
+    prep.latency["total"] = int((time.perf_counter() - prep.started) * 1000)
+
+    # 质量护栏（仅日志；流式路径不做事后重排/降级，见函数注释）
+    referenced = _referenced_indices(answer, len(prep.effective))
+    if not referenced:
+        logger.warning("流式答案未使用引用编号（架构 6.9 质量关注）：trace=%s", prep.trace_id)
+    elif len(referenced) < len(prep.effective):
+        logger.info(
+            "流式答案引用 %d/%d 个片段（retrieval 事件下发全集，编号一一对应）：trace=%s",
+            len(referenced), len(prep.effective), prep.trace_id,
+        )
+
+    _persist_qa(
+        session_id=prep.session_id,
+        trace_id=prep.trace_id,
+        message_id=prep.message_id,
+        question=prep.question,
+        answer=answer,
+        citations=prep.citations,
+        latency_ms=prep.latency["total"],
+    )
+    # 注：usage 暂为 null（当前流式响应不含用量字段；后续 SDK 支持后可补齐）
+    yield {"type": "done", "usage": None, "latency_ms": prep.latency}
