@@ -81,6 +81,9 @@ def init_state() -> None:
     ss.setdefault("api_base", DEFAULT_BASE_URL)
     ss.setdefault("health", None)
     ss.setdefault("doc_summary", None)
+    ss.setdefault("feedback_done", {})        # 已反馈过的 message_id（US-12，避免重复提交）
+    ss.setdefault("conversations", None)      # 历史会话缓存（FR-CONV-01）
+    ss.setdefault("first_query_done", False)  # 首次检索需加载本地向量模型，界面要提前打招呼
 
 
 def current_client() -> ApiClient:
@@ -153,9 +156,12 @@ def run_turn(question: str, *, is_retry: bool = False) -> None:
         if ss["demo_mode"]:
             reply: Dict[str, Any] = match_demo(question)
         else:
+            # 本地向量模型首次加载约 10~15 秒（第2周验收记录），提前告诉用户，避免以为卡死
+            spinner_text = "正在检索知识库…" if ss["first_query_done"] else "首次使用要加载检索模型（约 10~15 秒），请稍候…"
             try:
-                with st.spinner("正在检索知识库…"):
+                with st.spinner(spinner_text):
                     reply = current_client().ask(question, session_id=ss["session_id"])
+                ss["first_query_done"] = True
             except ApiError as exc:
                 if states.error_notice(exc, retry_label="重试这次提问"):
                     ss["pending_question"] = question
@@ -169,6 +175,36 @@ def run_turn(question: str, *, is_retry: bool = False) -> None:
         ss["messages"].append({"role": "assistant", **reply})
 
 
+def load_conversation(session_id: str) -> None:
+    """切换到历史会话：拉取完整问答记录（含引用）并回显（FR-CONV-02、US-13）。"""
+    ss = st.session_state
+    try:
+        data = current_client().get_conversation(session_id)
+    except ApiError as exc:
+        st.toast(f"读取会话失败：{exc.display}", icon="⚠️")
+        return
+    ss["messages"] = data.get("messages", [])
+    ss["session_id"] = data.get("session_id", session_id)
+    ss["pending_question"] = ""
+    ss["feedback_done"] = {}
+    st.rerun()
+
+
+def clear_current_session() -> None:
+    """清空当前会话：后端删消息 + 本地清屏（接口文档 2.10，需求 Q-01 决议）。"""
+    ss = st.session_state
+    if not ss["demo_mode"]:
+        try:
+            res = current_client().clear_conversation(ss["session_id"])
+            st.toast(f"已清空当前会话（{res.get('deleted_messages', 0)} 条消息）", icon="🧹")
+        except ApiError as exc:
+            st.toast(f"清空失败：{exc.display}", icon="⚠️")
+    ss["messages"] = []
+    ss["feedback_done"] = {}
+    ss["conversations"] = None
+    st.rerun()
+
+
 # --------------------------------------------------------------------------- #
 # 侧栏：连接状态 / 会话 / 演示模式 / 知识库概况
 # --------------------------------------------------------------------------- #
@@ -176,7 +212,7 @@ def render_sidebar() -> None:
     ss = st.session_state
     with st.sidebar:
         st.markdown("### 💬 企业知识库智能问答")
-        st.caption("Streamlit 前端骨架 · 第1周 UI 交付")
+        st.caption("Streamlit 前端 · 第3周 体验打磨")
 
         st.divider()
         st.markdown("**服务连接**")
@@ -211,11 +247,46 @@ def render_sidebar() -> None:
                 ss["messages"] = []
                 ss["session_id"] = new_session_id()
                 ss["pending_question"] = ""
+                ss["first_query_done"] = False
+                ss["feedback_done"] = {}
                 st.rerun()
         with col_2:
-            if st.button("清空对话", use_container_width=True):
-                ss["messages"] = []
-                st.rerun()
+            if st.button("清空当前会话", use_container_width=True):
+                clear_current_session()
+
+        # 历史会话（FR-CONV-01/02、US-13；演示模式下不查后端）
+        with st.expander("历史会话", expanded=False):
+            if ss["demo_mode"]:
+                st.caption("演示模式下不读取历史会话。")
+            else:
+                if st.button("刷新列表", use_container_width=True, key="refresh_convs"):
+                    ss["conversations"] = None
+                if ss["conversations"] is None:
+                    try:
+                        ss["conversations"] = current_client().list_conversations(page_size=20)
+                    except ApiError as exc:
+                        ss["conversations"] = {"total": 0, "items": [], "error": exc.display}
+                convs = ss["conversations"] or {}
+                if convs.get("error"):
+                    st.caption(f"读不到历史会话：{convs['error']}")
+                else:
+                    items = convs.get("items", [])
+                    if not items:
+                        st.caption("还没有历史会话。")
+                    else:
+                        st.caption(f"共 {convs.get('total', len(items))} 个，点标题可切回：")
+                        for conv in items:
+                            sid = conv.get("session_id", "")
+                            title = conv.get("title") or "（无标题会话）"
+                            if len(title) > 16:
+                                title = title[:16] + "…"
+                            mark = "🟢 " if sid == ss["session_id"] else ""
+                            if st.button(
+                                f"{mark}{title} · {conv.get('message_count', 0)} 条",
+                                key=f"conv_{sid}",
+                                use_container_width=True,
+                            ):
+                                load_conversation(sid)
 
         st.divider()
         st.markdown("**知识库概况**")

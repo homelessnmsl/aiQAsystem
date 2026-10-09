@@ -100,20 +100,70 @@ def render_answer_meta(message: Dict[str, Any]) -> None:
 
 
 def render_feedback(client: Any, message: Dict[str, Any]) -> None:
-    """点赞/点踩（US-12）：反馈失败不影响主流程，只给一句提示。"""
+    """点赞/点踩（US-12 / 接口文档 2.7）。
+
+    - 👍 直接提交；👎 先问一句"哪里不准确"（可留空）再提交；
+    - 同一条回答只提交一次，提交后显示"已收到你的反馈"；
+    - **反馈失败不影响主流程**（US-12 明确要求）：只给一句提示，不打断问答。
+    """
     message_id = message.get("message_id") or ""
-    col1, col2, col3 = st.columns([1, 1, 8])
-    with col1:
-        liked = st.button("👍 有帮助", key=f"up_{message_id or id(message)}")
-    with col2:
-        disliked = st.button("👎 不准确", key=f"down_{message_id or id(message)}")
-    if not (liked or disliked):
+    key = message_id or f"anon_{id(message)}"
+    ss = st.session_state
+    done: Dict[str, str] = ss.setdefault("feedback_done", {})
+    if key in done:
+        st.caption("✅ 已收到你的反馈，谢谢！")
         return
+
+    pending_key = f"feedback_pending_{key}"
+    col_up, col_down, _ = st.columns([1, 1, 6])
+    with col_up:
+        liked = st.button("👍 有帮助", key=f"fb_up_{key}")
+    with col_down:
+        disliked = st.button("👎 不准确", key=f"fb_down_{key}")
+
+    if liked:
+        _submit_feedback(client, message, "up", "", key, done)
+        return
+    if disliked:
+        ss[pending_key] = True
+        st.rerun()
+
+    if ss.get(pending_key):
+        comment = st.text_area(
+            "哪里不准确？（可选，最多 200 字）",
+            key=f"fb_comment_{key}",
+            max_chars=200,
+            height=80,
+            placeholder="例如：答案没有给出天数 / 引用位置对不上",
+        )
+        c1, c2, _ = st.columns([1, 1, 6])
+        with c1:
+            if st.button("提交反馈", key=f"fb_send_{key}", type="primary"):
+                _submit_feedback(client, message, "down", comment, key, done)
+                return
+        with c2:
+            if st.button("取消", key=f"fb_cancel_{key}"):
+                ss[pending_key] = False
+                st.rerun()
+
+
+def _submit_feedback(client: Any, message: Dict[str, Any], rating: str, comment: str,
+                     key: str, done: Dict[str, str]) -> None:
+    """提交一条反馈；无论成功与否都标记为已提交，避免同一条回答反复打扰用户。"""
+    message_id = message.get("message_id") or ""
     if not message_id:
-        st.toast("（接口尚未返回 message_id，反馈将在第3周接口就绪后生效）", icon="ℹ️")
-        return
-    try:
-        client.send_feedback(message_id, "up" if liked else "down", session_id=message.get("session_id", ""))
-        st.toast("感谢反馈，我们会持续改进！", icon="✅")
-    except ApiError:
-        st.toast("感谢反馈（记录失败，不影响本次问答）", icon="ℹ️")
+        st.toast("（本条回答没有 message_id，暂时无法提交反馈）", icon="ℹ️")
+    else:
+        try:
+            client.send_feedback(
+                message_id,
+                rating,
+                comment=comment or "",
+                session_id=message.get("session_id", ""),
+            )
+            st.toast("感谢反馈，我们会持续改进！", icon="✅")
+        except ApiError:
+            st.toast("感谢反馈（记录失败，不影响本次问答）", icon="ℹ️")
+    done[key] = rating
+    st.session_state[f"feedback_pending_{key}"] = False
+    st.rerun()

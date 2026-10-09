@@ -78,6 +78,83 @@ def ui_stage(client: ApiClient, base: str) -> None:
     rendered = " ".join([m.value for m in kb.markdown] + [c.value for c in kb.caption])
     check("知识库管理页：无异常", not kb.exception, str([e.value for e in kb.exception]))
     check("知识库管理页：渲染出文档列表", "01_员工手册.pdf" in rendered and "03_报销制度与费用标准.xlsx" in rendered)
+    metric_labels = [m.label for m in kb.metric]
+    check("知识库管理页：顶部知识库概况（文档数/切片数）",
+          "已入库文档" in metric_labels and "切片总数" in metric_labels, str(metric_labels))
+
+    at_side = AppTest.from_file(str(web_dir / "app.py"), default_timeout=120)
+    at_side.run()
+    side_texts = " ".join([m.value for m in at_side.markdown] + [c.value for c in at_side.caption])
+    buttons = [b.label for b in at_side.button]
+    check("问答页：侧栏有历史会话入口", any("历史会话" in e.label for e in at_side.expander),
+          str([e.label for e in at_side.expander]))
+    at_side.chat_input[0].set_value(CASES[0][0]).run()
+    check("问答页：回答下方有点赞/点踩按钮", any("有帮助" in b for b in buttons) or any("有帮助" in b.label for b in at_side.button))
+
+
+def session_stage(client: ApiClient) -> None:
+    """会话历史与反馈（第3周新增交互：FR-CONV-01/02、US-12/13、接口文档 2.7~2.10）。
+
+    自建一个专用会话做完整往返：提问 → 会话列表可见 → 详情含引用 → 反馈 → 清空，
+    结束后把该会话清掉，不给团队留垃圾数据。
+    """
+    import time
+    print("\n" + "=" * 60 + "\n会话与反馈（第3周新增交互）")
+    sid = f"conv_ui_check_{int(time.time())}"
+
+    try:
+        asked = client.ask("公司年假有多少天？", session_id=sid)
+    except ApiError as exc:
+        check("会话：提问成功", False, f"{exc.code} {exc.message}")
+        return
+    check("会话：提问返回 message_id", bool(asked.get("message_id")))
+    check("会话：引用编号连续（D2-02 修复后）",
+          [c["index"] for c in asked["citations"]] == list(range(1, len(asked["citations"]) + 1)),
+          str([c["index"] for c in asked["citations"]]))
+
+    convs = client.list_conversations(page_size=50)
+    mine = next((c for c in convs["items"] if c["session_id"] == sid), None)
+    check("会话列表：能查到刚提问的会话", mine is not None, f"共 {convs['total']} 个会话")
+    if mine:
+        print(f"   标题：{mine['title']}（{mine['message_count']} 条）")
+
+    detail = client.get_conversation(sid)
+    msgs = detail["messages"]
+    roles = [m["role"] for m in msgs]
+    check("会话详情：包含用户与助手两条消息", roles == ["user", "assistant"], str(roles))
+    if len(msgs) == 2:
+        check("会话详情：助手消息带回引用（可回显 FR-CIT-03）",
+              bool(msgs[1].get("citations")) and msgs[1]["answer_type"] == "answered",
+              f"answer_type={msgs[1]['answer_type']} citations={len(msgs[1].get('citations') or [])}")
+        print(f"   回显答案：{msgs[1]['answer'][:60].replace(chr(10), ' ')}")
+
+    message_id = asked.get("message_id", "")
+    try:
+        up = client.send_feedback(message_id, "up", session_id=sid)
+        check("反馈：点赞成功（US-12）", bool(up.get("feedback_id")), str(up))
+    except ApiError as exc:
+        check("反馈：点赞成功（US-12）", False, f"{exc.code} {exc.message}")
+    try:
+        down = client.send_feedback(message_id, "down", comment="UI 自检：测试点踩原因", session_id=sid)
+        check("反馈：点踩并带原因成功", bool(down.get("feedback_id")), str(down))
+    except ApiError as exc:
+        check("反馈：点踩并带原因成功", False, f"{exc.code} {exc.message}")
+    try:
+        client.send_feedback(message_id, "sideways", session_id=sid)
+        check("反馈：非法 rating 被拒绝（1001）", False, "未报错")
+    except ApiError as exc:
+        check("反馈：非法 rating 被拒绝（1001）", exc.code == 1001, f"code={exc.code}")
+
+    try:
+        cleared = client.clear_conversation(sid)
+        check("清空会话：返回删除条数", int(cleared.get("deleted_messages", 0)) >= 2, str(cleared))
+    except ApiError as exc:
+        check("清空会话：返回删除条数", False, f"{exc.code} {exc.message}")
+    try:
+        after = client.get_conversation(sid)
+        check("清空会话：消息已清空", not after["messages"], f"剩余 {len(after['messages'])} 条")
+    except ApiError as exc:
+        check("清空会话：消息已清空", exc.code == 1005, f"code={exc.code}（会话已不存在也算通过）")
 
 
 def main() -> int:
@@ -145,6 +222,8 @@ def main() -> int:
             check("上传结果字段齐全", all("filename" in it and "status" in it for it in res["items"]))
         except ApiError as exc:
             check("上传接口正常返回", False, f"{exc.code} {exc.message}")
+
+    session_stage(client)
 
     if "--no-ui" not in sys.argv:
         ui_stage(client, os.environ.get("WEB_API_BASE", BASE))
