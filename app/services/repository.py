@@ -46,6 +46,18 @@ CREATE TABLE IF NOT EXISTS messages (
     latency_ms    INTEGER,
     created_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS feedback (
+    feedback_id   TEXT PRIMARY KEY,
+    message_id    TEXT NOT NULL,
+    session_id    TEXT NOT NULL,
+    rating        TEXT NOT NULL,
+    comment       TEXT,
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_session ON feedback(session_id);
 """
 
 
@@ -206,6 +218,78 @@ class Repository:
                 "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at, rowid", (session_id,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # ============================================================
+    # 会话查询 / 反馈（W3：接口文档 2.7~2.10）
+    # ============================================================
+    def list_conversations(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: Optional[str] = None,
+    ) -> Tuple[int, List[Dict[str, Any]]]:
+        """会话列表（含消息数），按 updated_at 倒序（接口文档 2.8）"""
+        where: List[str] = []
+        params: List[Any] = []
+        if keyword:
+            where.append("c.title LIKE ?")
+            params.append(f"%{keyword}%")
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+
+        with self._lock:
+            total = int(self._conn.execute(f"SELECT COUNT(*) FROM conversations c{clause}", params).fetchone()[0])
+            rows = self._conn.execute(
+                f"""
+                SELECT c.session_id, c.title, c.created_at, c.updated_at,
+                       COUNT(m.message_id) AS message_count
+                FROM conversations c
+                LEFT JOIN messages m ON m.session_id = c.session_id
+                {clause}
+                GROUP BY c.session_id
+                ORDER BY c.updated_at DESC, c.session_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, int(page_size), (int(page) - 1) * int(page_size)],
+            ).fetchall()
+        return total, [dict(row) for row in rows]
+
+    def get_conversation(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """会话一行（不存在返回 None；接口文档 2.9 的 1005 判断用）"""
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM conversations WHERE session_id = ?", (session_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """按 message_id 查消息（反馈接口校验用，接口文档 2.7）"""
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM messages WHERE message_id = ?", (message_id,)).fetchone()
+        return dict(row) if row else None
+
+    def clear_messages(self, session_id: str) -> int:
+        """清空会话消息（保留会话行），返回删除条数（接口文档 2.10；Q-01 决议）"""
+        with self._lock:
+            cursor = self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            self._conn.commit()
+        return int(cursor.rowcount)
+
+    def add_feedback(
+        self,
+        *,
+        feedback_id: str,
+        message_id: str,
+        session_id: str,
+        rating: str,
+        comment: Optional[str] = None,
+        created_at: Optional[str] = None,
+    ) -> None:
+        """写入一条反馈（UC-08 / US-12，架构 7.2 feedback 表）"""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO feedback(feedback_id, message_id, session_id, rating, comment, created_at) VALUES(?,?,?,?,?,?)",
+                (feedback_id, message_id, session_id, rating, comment, created_at or now_iso()),
+            )
+            self._conn.commit()
 
 
 _repository: Optional[Repository] = None
