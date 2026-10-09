@@ -40,6 +40,12 @@ NOT_FOUND_ANSWER = "抱歉，未在企业知识库中找到相关依据。您可
 _FALLBACK_SYSTEM = "你是企业知识库智能问答助手，只能依据【检索片段】回答；无依据时如实说明未找到，严禁编造。"
 _FALLBACK_TEMPLATE = "【历史对话】\n${history}\n\n【检索片段】\n${context}\n\n【用户问题】\n${question}"
 
+#: 多轮改写系统提示（架构 8.2 ①；FR-QA-05：理解"那转正后呢？"这类省略式追问）
+REWRITE_SYSTEM_PROMPT = (
+    "你是检索查询改写助手。结合对话历史，把用户当前问题改写为不依赖上下文、语义完整、可独立检索的中文问句。"
+    "若当前问题本身已语义完整（不依赖历史），原样输出。只输出改写后的问句，一行，不要任何解释。"
+)
+
 
 @dataclass
 class RAGResult:
@@ -80,16 +86,61 @@ def render_prompt(*, history: str, context: str, question: str) -> str:
     return rendered
 
 
-def _format_history(session_id: str, rounds: int = 3) -> str:
+def _history_entries(session_id: str) -> List[Dict[str, str]]:
+    """会话历史：优先内存；内存为空时从 SQLite 恢复（服务器重启后仍可续聊，FR-CONV-01）"""
+    entries = conversation_store.history(session_id)
+    if entries:
+        return entries
+    try:
+        rows = get_repository().list_messages(session_id)
+    except Exception as exc:  # noqa: BLE001 - 历史缺失不应阻塞问答
+        logger.warning("会话历史恢复失败（按无历史处理）：%s", exc)
+        return []
+    return [{"role": row["role"], "content": row["content"]} for row in rows]
+
+
+def _format_history(entries: List[Dict[str, str]], rounds: int = 3) -> str:
     """最近 N 轮历史（user/assistant 交替）；空时返回「（无）」（PE README §2）"""
-    history = conversation_store.history(session_id)
-    if not history:
+    if not entries:
         return "（无）"
     lines: List[str] = []
-    for message in history[-rounds * 2:]:
+    for message in entries[-rounds * 2:]:
         speaker = "用户" if message.get("role") == "user" else "助手"
         lines.append(f"{speaker}：{message.get('content', '')}")
     return "\n".join(lines)
+
+
+def _rewrite_question(question: str, history_entries: List[Dict[str, str]]) -> Optional[str]:
+    """多轮改写：把省略式追问补全为可独立检索的问题（架构 8.2 ①、FR-QA-05）
+
+    - 无历史 → 不改写（返回 None）；
+    - 改写失败（LLM 异常等）→ 降级为原文检索，不影响主链路（异常兜底）；
+    - 改写结果与原文相同 → 视为未改写（接口文档 2.6：未改写为 null）。
+    """
+    if not history_entries:
+        return None
+
+    history_text = _format_history(history_entries, rounds=3)
+    user_prompt = f"【对话历史】\n{history_text}\n\n【当前问题】\n{question}\n\n【改写结果】"
+    try:
+        result = get_llm_client().chat(
+            [
+                {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+        )
+    except BizError as exc:
+        logger.warning("多轮改写失败（降级为原文检索）：%s", exc)
+        return None
+
+    rewritten = result.content.strip().strip("“”\"'").strip()
+    if not rewritten or rewritten == question.strip():
+        return None
+    if len(rewritten) > 500:
+        rewritten = rewritten[:500]
+    logger.info("多轮改写：%r → %r", question, rewritten)
+    return rewritten
 
 
 def _strip_out_of_range_marks(answer: str, max_index: int) -> str:
@@ -130,10 +181,15 @@ def answer_question(
     if knowledge_is_empty():
         raise BizError(CODE_KB_EMPTY, "知识库为空，请先上传文档")
 
-    # 1. 检索：raw = 未过滤 Top-K 明细（retrieved[]），effective = 有效候选（生成与引用）
+    # 0.5 会话历史（优先内存；服务器重启后从 SQLite 恢复）
+    history_entries = _history_entries(session_id)
+
+    # 1. 多轮改写（架构 8.2 ①）→ 检索：raw = 未过滤 Top-K 明细（retrieved[]）、effective = 有效候选
     retrieval_started = time.perf_counter()
+    rewritten_question = _rewrite_question(question, history_entries)
+    search_question = rewritten_question or question
     raw_chunks, effective = retrieve_with_raw(
-        question, top_k=top_k, score_threshold=score_threshold, use_rerank=use_rerank
+        search_question, top_k=top_k, score_threshold=score_threshold, use_rerank=use_rerank
     )
     retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
 
@@ -162,7 +218,7 @@ def answer_question(
     else:
         effective_citations = build_citations(effective)
         context = build_context(effective)
-        prompt = render_prompt(history=_format_history(session_id), context=context, question=question)
+        prompt = render_prompt(history=_format_history(history_entries), context=context, question=question)
         system_prompt = _read_prompt(SYSTEM_RAG_FILE, _FALLBACK_SYSTEM)
 
         if not settings.llm_configured:
@@ -239,4 +295,5 @@ def answer_question(
         usage=usage,
         latency_ms=latency,
         created_at=created_at,
+        rewritten_question=rewritten_question,
     )
