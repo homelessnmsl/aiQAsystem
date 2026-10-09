@@ -46,4 +46,4 @@ cp .env.example .env          # 填入自己的 API Key
 - 第1周 ✅：基础搭建 + 需求定稿（FastAPI + DeepSeek 打通，tag week1）
 - 第2周 ✅：RAG 核心链路（上传 → 检索 → 带引用回答，tag week2）
 - 第3周：检索优化（Rerank）+ 体验打磨
-- 第4周 🔄：整合测试 + 答辩
+- 第4周 🔄：整合测试与交付（答辩已取消）
