@@ -57,3 +57,72 @@ def test_list_documents_invalid_params(client, temp_repo):
     resp = client.get("/api/documents", params={"page_size": 0})
     assert resp.status_code == 400 and resp.json()["code"] == 1001
     assert resp.json()["data"]["errors"][0]["field"] == "page_size"
+
+
+# ============ W3-06：删除文档（接口文档 2.5） ============
+class _FakeVectorStore:
+    """替身：记录 delete_by_doc 调用，可注入错误"""
+
+    def __init__(self, result: int = 6, error: Exception | None = None):
+        self.result = result
+        self.error = error
+        self.deleted: list[str] = []
+
+    def delete_by_doc(self, doc_id: str) -> int:
+        if self.error is not None:
+            raise self.error
+        self.deleted.append(doc_id)
+        return self.result
+
+
+def test_delete_document_ok(client, temp_repo, monkeypatch, tmp_path):
+    _seed(temp_repo)
+    fake_store = _FakeVectorStore(result=6)
+    monkeypatch.setattr("app.api.documents.vector_store", fake_store)
+    monkeypatch.setattr(app_main.settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
+    doc_dir = tmp_path / "uploads" / "doc_1"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "01_员工手册.pdf").write_bytes(b"%PDF")
+
+    resp = client.delete("/api/documents/doc_1")
+    body = resp.json()
+    assert resp.status_code == 200 and body["code"] == 0
+    assert body["data"] == {"doc_id": "doc_1", "deleted_chunks": 6}
+    assert fake_store.deleted == ["doc_1"]
+    assert temp_repo.get_document("doc_1")["status"] == "deleted"
+    assert not doc_dir.exists()  # 原始文件目录已删除
+
+    # 默认列表不含已删除；status=all 可见且状态正确
+    assert client.get("/api/documents").json()["data"]["total"] == 1
+    all_items = client.get("/api/documents", params={"status": "all"}).json()["data"]["items"]
+    assert any(item["doc_id"] == "doc_1" and item["status"] == "deleted" for item in all_items)
+
+
+def test_delete_document_not_found(client, temp_repo):
+    _seed(temp_repo)
+    resp = client.delete("/api/documents/doc_missing")
+    assert resp.status_code == 404 and resp.json()["code"] == 1005
+    assert resp.json()["message"] == "文档不存在或已被删除"
+
+
+def test_delete_document_twice(client, temp_repo, monkeypatch, tmp_path):
+    """重复删除：第二次返回 1005（已删除），其它文档不受影响"""
+    _seed(temp_repo)
+    monkeypatch.setattr("app.api.documents.vector_store", _FakeVectorStore(result=6))
+    monkeypatch.setattr(app_main.settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
+    assert client.delete("/api/documents/doc_1").json()["code"] == 0
+    second = client.delete("/api/documents/doc_1")
+    assert second.status_code == 404 and second.json()["code"] == 1005
+    assert temp_repo.get_document("doc_2")["status"] == "success"
+
+
+def test_delete_document_vector_error(client, temp_repo, monkeypatch):
+    """向量库删除失败 → 2003（HTTP 503）；台账保持 success 可重试（架构 6.11）"""
+    from app.core.errors import CODE_VECTOR_STORE_ERROR, BizError
+
+    _seed(temp_repo)
+    fake_store = _FakeVectorStore(error=BizError(CODE_VECTOR_STORE_ERROR, "知识库暂时不可用，请稍后重试"))
+    monkeypatch.setattr("app.api.documents.vector_store", fake_store)
+    resp = client.delete("/api/documents/doc_1")
+    assert resp.status_code == 503 and resp.json()["code"] == 2003
+    assert temp_repo.get_document("doc_1")["status"] == "success"
