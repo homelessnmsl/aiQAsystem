@@ -31,6 +31,15 @@ pip install -r requirements.txt
 cp .env.example .env          # 填入自己的 API Key
 ```
 
+### 演示 / 交付一键启动
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start_demo.ps1        # 起后端+前端+预热+健康检查
+powershell -ExecutionPolicy Bypass -File scripts\start_demo.ps1 -Stop  # 停止
+```
+
+详细参数、日志位置与排障见 [docs/演示部署说明.md](docs/演示部署说明.md)。
+
 ## 仓库规范
 
 - 协作规范：[CONTRIBUTING.md](CONTRIBUTING.md)
