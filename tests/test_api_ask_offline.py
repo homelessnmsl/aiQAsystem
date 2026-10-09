@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 import app.main as app_main
 from app.services.repository import Repository
 from app.services.retrieval import RetrievedChunk
-from fakes import FakeLLM
+from fakes import FakeLLM, ScriptedChatLLM
 
 
 @pytest.fixture()
@@ -208,3 +208,76 @@ def test_ask_citations_renumbered_continuous(client, temp_repo, monkeypatch):
     assert data["citations"][0]["source_file"] == "01_员工手册.pdf"
     assert data["citations"][1]["chunk_id"] == "doc_3:2"
     assert data["citations"][1]["location"] == "工作表「差旅标准」第 5~8 行"
+# ============ 多轮改写（架构 8.2 ①、FR-QA-05） ============
+def test_multiturn_rewrite_applied(client, temp_repo, monkeypatch):
+    """有历史时先改写问题，再用改写后的问题检索；无历史不改写"""
+    from app.services.conversation import conversation_store
+
+    good = _chunk(rank=1, score=0.72)
+    seen = {}
+
+    def fake_retrieve(question, **kwargs):
+        seen["question"] = question
+        return [good], [good]
+
+    monkeypatch.setattr("app.services.rag.retrieve_with_raw", fake_retrieve)
+    monkeypatch.setattr("app.services.rag.knowledge_is_empty", lambda store=None: False)
+    scripted = ScriptedChatLLM([
+        "试用期为 3 个月 [1]。",
+        "转正后的年假天数是多少？",
+        "转正后当年度年假按剩余天数折算 [1]。",
+    ])
+    monkeypatch.setattr("app.services.rag.get_llm_client", lambda: scripted)
+    monkeypatch.setattr(app_main.settings, "DEEPSEEK_API_KEY", "sk-test-offline")
+
+    session_id = "conv_pytest_multiturn"
+    conversation_store.clear(session_id)
+
+    first = client.post("/api/ask", json={"question": "试用期有多久？", "session_id": session_id}).json()
+    assert first["data"]["answer_type"] == "answered"
+    assert first["data"]["rewritten_question"] is None  # 无历史 → 不改写
+    assert seen["question"] == "试用期有多久？"
+    assert len(scripted.calls) == 1  # 只有生成调用
+
+    second = client.post("/api/ask", json={"question": "那转正后呢？", "session_id": session_id}).json()
+    assert second["data"]["rewritten_question"] == "转正后的年假天数是多少？"
+    assert seen["question"] == "转正后的年假天数是多少？"  # 检索用的是改写后的问题
+    assert len(scripted.calls) == 3  # 第一轮生成 + 第二轮改写 + 第二轮生成
+
+    # 第二轮 Prompt 中携带历史（用户/助手 文本注入）
+    second_prompt = scripted.calls[2]["messages"][1]["content"]
+    assert "用户：试用期有多久？" in second_prompt
+    assert "助手：试用期为 3 个月 [1]。" in second_prompt
+
+
+def test_multiturn_rewrite_failure_falls_back(client, temp_repo, monkeypatch):
+    """改写调用失败时降级为原文检索，主链路不受影响（异常兜底）"""
+    from app.core.errors import CODE_LLM_TIMEOUT, BizError
+    from app.services.conversation import conversation_store
+
+    good = _chunk(rank=1, score=0.72)
+    seen = {}
+
+    def fake_retrieve(question, **kwargs):
+        seen["question"] = question
+        return [good], [good]
+
+    monkeypatch.setattr("app.services.rag.retrieve_with_raw", fake_retrieve)
+    monkeypatch.setattr("app.services.rag.knowledge_is_empty", lambda store=None: False)
+    scripted = ScriptedChatLLM([
+        "试用期为 3 个月 [1]。",
+        BizError(CODE_LLM_TIMEOUT, "回答生成超时，请稍后重试"),
+        "转正后年假按比例折算 [1]。",
+    ])
+    monkeypatch.setattr("app.services.rag.get_llm_client", lambda: scripted)
+    monkeypatch.setattr(app_main.settings, "DEEPSEEK_API_KEY", "sk-test-offline")
+
+    session_id = "conv_pytest_rewrite_fallback"
+    conversation_store.clear(session_id)
+    client.post("/api/ask", json={"question": "试用期有多久？", "session_id": session_id})
+
+    second = client.post("/api/ask", json={"question": "那之后呢？", "session_id": session_id}).json()
+    assert second["code"] == 0
+    assert second["data"]["answer_type"] == "answered"
+    assert second["data"]["rewritten_question"] is None  # 改写失败 → 未改写
+    assert seen["question"] == "那之后呢？"  # 降级用原文检索

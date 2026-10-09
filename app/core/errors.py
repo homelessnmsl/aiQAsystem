@@ -110,6 +110,12 @@ def _reason_for(error: dict) -> str:
         return "page 必须 ≥1"
     if field == "page_size":
         return "page_size 必须在 1~100 之间"
+    if field == "rating":
+        return "rating 只能为 up / down"
+    if field == "comment":
+        return "comment 不能超过 200 字"
+    if field == "message_id":
+        return "message_id 不能为空"
     return str(error.get("msg", "参数不合法"))
 
 
