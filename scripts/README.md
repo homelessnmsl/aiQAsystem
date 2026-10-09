@@ -11,6 +11,8 @@
 | `check_qa_dataset.py` | 评测集格式校验（PE 交付） | PE | ✅ 第1周 |
 | `run_all.py` | 一键启动前后端（演示与 M-07 首次可用时间） | DEV | 第2周（W2-08 联调期） |
 
+> ⚠️ **Chroma 并发提示**：后端运行期间，不要用离线脚本（`--mode offline/retrieval`）直连同一个 `data/chroma` —— Chroma 持久目录不支持多进程并发，会导致后端句柄失效（`/api/health` 降级、`/api/ask` 返回 2003）。评测与后端请二选一，或评测后重启后端。
+
 常用命令（仓库根目录）：
 ```bash
 python scripts/init_kb.py --rebuild                    # 重建知识库（样例数据）
