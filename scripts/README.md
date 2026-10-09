@@ -7,7 +7,7 @@
 | `eval_retrieval.py` | 检索 A/B 对比（向量 vs Rerank：Recall@5 / Top-1 来源 / 位置覆盖 / 时延 / 越界体检） | AD | ✅ 第3周预研（10-08 出对比数据） |
 | `build_kb.py` | 重建向量库（`--rebuild` 清空后扫描 `data/uploads/` 全量重导入） | AD | ✅ 第2周 |
 | `download_model.py` | 从 ModelScope（魔搭）下载 Embedding 模型到本地（应对 HF 不可达） | AD | ✅ 第2周 |
-| `eval_rag.py` | 跑 20 条评测集（M-01~M-04；`--mode retrieval/offline/api`），输出逐条明细与报告草稿 | PE | ✅ 第2周（10-08 首轮：M-01 100%、M-02 100%、M-03 93.3%、M-04 100%，见 `docs/评测报告_v1.md`） |
+| `eval_rag.py` | 评测 M-01~M-04：`--mode retrieval/offline/api`、`--dataset`（单轮/多轮）、`--rewrite none/llm`、`--history-style text/messages`（W3-08 A/B），输出逐条明细与报告草稿 | PE | ✅ 第3周（10-09 多轮四配置 A/B，见 `docs/多轮评测与A-B数据.md`） |
 | `check_qa_dataset.py` | 评测集格式校验（PE 交付） | PE | ✅ 第1周 |
 | `run_all.py` | 一键启动前后端（演示与 M-07 首次可用时间） | DEV | 第2周（W2-08 联调期） |
 
