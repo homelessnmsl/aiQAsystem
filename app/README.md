@@ -112,3 +112,8 @@ python -m pytest tests/ -q
 5. **`stream=true`（/api/ask）** 返回 1001 + "计划第3周交付"明确提示（2.11 约定第2周先非流式）。
 6. **默认提示词**：`/api/chat` 用 PE 的 `prompts/system_chat.md`；`/api/ask` 用
    `prompts/system_rag.md` + `answer_template.md`（string.Template 渲染；文件缺失时内置兜底）。
+7. **推理模型兼容（`reasoning_content`）**：`deepseek-v4-pro` 等推理模型会在响应中携带思维链，
+   本系统一律**不对外返回、不落库、不参与后续请求拼接**（工具链路的助手消息清洗为
+   role/content/tool_calls 规范结构）；流式输出只下发正文（思维链分片跳过）；
+   若 `max_tokens` 被思维链耗尽（`finish_reason=length` 且正文为空）按 3004 返回明确提示。
+   切换到推理模型时建议同步调大 `LLM_MAX_TOKENS`（思维链计入生成 token 预算）。

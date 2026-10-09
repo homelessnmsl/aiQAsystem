@@ -9,6 +9,29 @@ from ..services.llm import BaseLLM
 from .conversation import ConversationManager
 
 
+def _sanitize_assistant_message(message) -> dict:
+    """把模型返回的助手消息清洗为可安全回传的规范字典。
+
+    推理模型（如 deepseek-v4-pro）会在 message 上附带 reasoning_content（思维链）等私有字段，
+    原样回传既浪费 token 也可能不被接口接受；这里只保留 role / content / tool_calls。
+    """
+    return {
+        "role": "assistant",
+        "content": message.content or "",
+        "tool_calls": [
+            {
+                "id": tool_call.id,
+                "type": "function",
+                "function": {
+                    "name": tool_call.function.name,
+                    "arguments": tool_call.function.arguments,
+                },
+            }
+            for tool_call in (message.tool_calls or [])
+        ],
+    }
+
+
 class AgentExecutor:
     """Agent 执行器：编排对话流程与工具调用（同步 + 流式）"""
 
@@ -39,7 +62,7 @@ class AgentExecutor:
             message = response.choices[0].message
 
             if message.tool_calls:
-                messages.append(message)
+                messages.append(_sanitize_assistant_message(message))
                 for tool_call in message.tool_calls:
                     tool_name = tool_call.function.name
                     tool_args = tool_call.function.arguments
@@ -68,7 +91,7 @@ class AgentExecutor:
 
         # 2. 如有工具调用，先执行并回填结果
         if message.tool_calls:
-            messages.append(message)
+            messages.append(_sanitize_assistant_message(message))
             for tool_call in message.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = tool_call.function.arguments

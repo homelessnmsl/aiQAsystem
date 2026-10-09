@@ -95,6 +95,7 @@ class ScriptedLLM:
         self._responses = list(responses)
         self.reply = "这是离线测试回复。"
         self.chat_with_tools_calls = []
+        self.stream_chat_calls = []
 
     def chat_with_tools(self, messages, tools=None, **kwargs):
         self.chat_with_tools_calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
@@ -103,5 +104,6 @@ class ScriptedLLM:
         return FakeResponse(content="(脚本已用尽)")
 
     def stream_chat(self, messages, **kwargs):
+        self.stream_chat_calls.append({"messages": list(messages), "kwargs": kwargs})
         for ch in self.reply:
             yield ch
