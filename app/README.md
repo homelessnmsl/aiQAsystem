@@ -53,11 +53,12 @@
 | 历史恢复：内存为空时从 SQLite 恢复会话历史（服务器重启后仍可续聊） | ✅ | `services/rag.py` |
 | feedback 表与索引（架构 7.2）+ 会话查询/清空台账方法 | ✅ | `services/repository.py` |
 | API-05 `DELETE /api/documents/{doc_id}`：删向量 → 删原始文件 → 台账置 deleted；重复删除安全（1005）（W3-06） | ✅ | `api/documents.py` |
-| 离线测试：会话/反馈/多轮改写/删除文档/降级（全量 125 条） | ✅ | `../tests/` |
+| W3-07 流式问答：`POST /api/ask` + `stream=true`（SSE：retrieval → delta* → done / error；思维链分片跳过；准备阶段失败走统一 JSON） | ✅ | `api/ask.py`、`services/rag.py` |
+| 离线测试：会话/反馈/多轮改写/删除文档/流式/降级（全量 134 条） | ✅ | `../tests/` |
 
 ### 仍不在范围（第3周看板待定 / 第4周）
 
-- `/api/ask` 的 `stream=true`（SSE，2.11；W3-07 在途）与 `clarify` 澄清（2.6 实现提示 1，第4周）
+- `/api/ask` 的 `clarify` 澄清（2.6 实现提示 1，第4周）
 - Rerank 默认启用与 A/B 调优（`use_rerank` 已预留；实测结论见架构 6.8，默认关闭；W3-04 扩容复核）
 
 ## 二、运行
@@ -92,7 +93,7 @@ python -m uvicorn app.main:app --reload --port 8000
 | POST | `/api/upload` | 上传 1~5 个文档并建库 | W2-05 |
 | GET | `/api/documents` | 文档台账列表（分页/过滤） | W2-06 |
 | DELETE | `/api/documents/{doc_id}` | 删除文档及其向量与原始文件（重复删除安全） | W3-06 |
-| POST | `/api/ask` | RAG 问答：答案 + 引用 + 检索明细（多轮改写） | W2-07 / W3 |
+| POST | `/api/ask` | RAG 问答：答案 + 引用 + 检索明细（多轮改写；`stream=true` 走 SSE，2.11） | W2-07 / W3-07 |
 | POST | `/api/feedback` | 答案反馈（up/down + 备注） | W3 |
 | GET | `/api/conversations` | 会话列表（分页 + 标题模糊） | W3 |
 | GET | `/api/conversations/{session_id}` | 会话详情（消息 + 引用） | W3 |
@@ -135,6 +136,9 @@ python -m pytest tests/ -q
 - 清空：`deleted_messages=4`，详情消息归零，进程内上下文同步清空
 - 删除文档（真实链路）：临时文档上传 → 提问命中并引用 → 删除（`deleted_chunks=1`）→ **检索不再命中**、
   重复删除返回 1005、台账/向量库计数回到一致（31/10）（W3-06）
+- 流式问答（curl 实测，2026-10-09）：可答题事件序列 `retrieval → delta×N → done` 正确
+  （retrieval 先发、done 为最后一条、latency 分段完整）；无依据题 `retrieval → 兜底 delta → done`，
+  不调用 LLM；思维链分片未下发（W3-07）
 
 ## 六、实现说明与取舍（评审用）
 
@@ -152,8 +156,13 @@ python -m pytest tests/ -q
    台账切片总数与 Chroma count，不一致置 `degraded` 并告警；`scripts/*` 与 API 建库路径均已同步台账。
 8. **默认提示词**：`/api/chat` 用 PE 的 `prompts/system_chat.md`；`/api/ask` 用
    `prompts/system_rag.md` + `answer_template.md`（string.Template 渲染；文件缺失时内置兜底）。
-7. **推理模型兼容（`reasoning_content`）**：`deepseek-v4-pro` 等推理模型会在响应中携带思维链，
+9. **推理模型兼容（`reasoning_content`）**：`deepseek-v4-pro` 等推理模型会在响应中携带思维链，
    本系统一律**不对外返回、不落库、不参与后续请求拼接**（工具链路的助手消息清洗为
    role/content/tool_calls 规范结构）；流式输出只下发正文（思维链分片跳过）；
    若 `max_tokens` 被思维链耗尽（`finish_reason=length` 且正文为空）按 3004 返回明确提示。
    切换到推理模型时建议同步调大 `LLM_MAX_TOKENS`（思维链计入生成 token 预算）。
+10. **流式问答（W3-07，接口文档 2.11）**：准备阶段（校验 / 多轮改写 / 检索）失败按统一 JSON 错误返回；
+    生成阶段事件 `retrieval → delta* → done / error`（done / error 必为最后一条）。`citations` 在
+    retrieval 事件前置下发全部有效候选（编号 1..N 连续，前端可先渲染引用卡片）；流式路径不做
+    事后编号重排 / 降级（已下发内容不可回撤），落库与下发一致、越界与未引用仅记日志（质量护栏）。
+    `done.usage` 暂为 null（流式响应无用量字段；同步接口 `/api/ask` 的 usage 不受影响）。
