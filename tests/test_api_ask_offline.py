@@ -183,3 +183,28 @@ def test_ask_strips_out_of_range_marks(client, temp_repo, monkeypatch):
     _patch_llm(monkeypatch, reply="年假 5 天 [1]，详情见 [3] 号文件。")
     body = client.post("/api/ask", json={"question": "年假多少天？"}).json()
     assert body["data"]["answer"] == "年假 5 天 [1]，详情见  号文件。"
+
+
+def test_ask_citations_renumbered_continuous(client, temp_repo, monkeypatch):
+    """D2-02 方案B：模型引用 [1][3]（不连续）→ 对外答案与 citations 重排为连续 [1][2]。"""
+    c1 = _chunk(rank=1, score=0.72, doc_id="doc_1", source="01_员工手册.pdf", location="第 3 页",
+                content="年假：满 1 年不满 10 年每年 5 天。")
+    c2 = _chunk(rank=2, score=0.61, doc_id="doc_3", source="03_报销制度.xlsx", location="工作表「差旅标准」第 2~4 行",
+                content="出差住宿标准：一线城市 400 元/晚。")
+    c3 = _chunk(rank=3, score=0.55, doc_id="doc_3", source="03_报销制度.xlsx", location="工作表「差旅标准」第 5~8 行",
+                content="出差餐补：100 元/天。")
+    _patch_retrieval(monkeypatch, raw=[c1, c2, c3], effective=[c1, c2, c3])
+    _patch_llm(monkeypatch, reply="年假每年 5 天 [1]；出差住宿一线城市 400 元/晚 [3]。")
+
+    resp = client.post("/api/ask", json={"question": "年假和出差住宿标准各是多少？"})
+    body = resp.json()
+    data = body["data"]
+
+    assert data["answer_type"] == "answered"
+    # 答案编号连续化：[1][3] → [1][2]
+    assert "[1]" in data["answer"] and "[2]" in data["answer"] and "[3]" not in data["answer"]
+    # citations 同步重排：2 条、编号 1/2、溯源字段保留原值
+    assert [c["index"] for c in data["citations"]] == [1, 2]
+    assert data["citations"][0]["source_file"] == "01_员工手册.pdf"
+    assert data["citations"][1]["chunk_id"] == "doc_3:2"
+    assert data["citations"][1]["location"] == "工作表「差旅标准」第 5~8 行"
