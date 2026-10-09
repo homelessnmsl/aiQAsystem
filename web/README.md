@@ -22,6 +22,8 @@ web/
 
 ## 启动
 
+**演示/交付推荐**：一键启动（起后端 + 前端 + 健康检查 + 预热 + 日志）——`powershell -ExecutionPolicy Bypass -File scripts\start_demo.ps1`，停止用 `-Stop`。
+
 ```bash
 # 1) 依赖（全组统一使用仓库内 .venv，见根目录 requirements.txt）
 .venv\Scripts\python.exe -m pip install -r requirements.txt
