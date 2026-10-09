@@ -89,6 +89,33 @@ def test_chat_page() -> None:
     check("无依据时走兜底（不编造）", any("未找到依据" in m.value for m in at2.markdown))
     no_exception(at2, "兜底提问")
 
+    print("\n[3b/4] 问答页：第3周新增交互（反馈两步、历史会话入口、预热提示）")
+    check("侧栏有历史会话入口", any("历史会话" in e.label for e in at2.expander))
+    check("演示模式下不读取历史会话", any("演示模式下不读取历史会话" in c.value for c in at2.caption))
+
+    # 回到有答案的一轮，测试反馈交互
+    at3 = AppTest.from_file(str(WEB_DIR / "app.py"), default_timeout=90)
+    at3.run()
+    at3.toggle[0].set_value(True).run()
+    at3.chat_input[0].set_value("公司年假有多少天？").run()
+    labels = [b.label for b in at3.button]
+    check("回答下方有点赞/点踩按钮", any("有帮助" in x for x in labels) and any("不准确" in x for x in labels), str(labels))
+
+    up = next(b for b in at3.button if "有帮助" in b.label)
+    up.click().run()
+    check("点赞后显示已收到反馈", any("已收到你的反馈" in c.value for c in at3.caption))
+
+    at4 = AppTest.from_file(str(WEB_DIR / "app.py"), default_timeout=90)
+    at4.run()
+    at4.toggle[0].set_value(True).run()
+    at4.chat_input[0].set_value("公司年假有多少天？").run()
+    down = next(b for b in at4.button if "不准确" in b.label)
+    down.click().run()
+    check("点踩后出现原因输入框（US-12）", any("哪里不准确" in ta.label for ta in at4.text_area),
+          str([ta.label for ta in at4.text_area]))
+    cancel = next((b for b in at4.button if b.label == "取消"), None)
+    check("点踩原因可取消", cancel is not None)
+
 
 def test_kb_page() -> None:
     print("\n[4/4] 知识库管理页：上传区 + 空态")
@@ -136,3 +163,4 @@ if __name__ == "__main__":
         print(f"❌ 未通过 {len(FAILURES)} 项：" + "；".join(FAILURES))
         raise SystemExit(1)
     print(f"✅ 前端骨架自测全部通过（{len(CHECKS)} 项）")
+    print("   （第1周骨架 + 第3周新增交互：反馈两步、历史会话入口、预热提示）")

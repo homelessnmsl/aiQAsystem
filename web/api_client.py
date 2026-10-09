@@ -228,14 +228,52 @@ class ApiClient:
             json={"message_id": message_id, "session_id": session_id, "rating": rating, "comment": comment},
         )
 
-    def list_conversations(self) -> List[Dict[str, Any]]:
-        """API-09 ``GET /api/conversations``（第3周）。"""
-        data = self._request("GET", "/api/conversations")
-        return list(data.get("items", []) if isinstance(data, dict) else data or [])
+    def list_conversations(self, page: int = 1, page_size: int = 20) -> Dict[str, Any]:
+        """API-09 ``GET /api/conversations``：侧栏历史会话（接口文档 2.8、FR-CONV-01）。"""
+        data = self._request("GET", "/api/conversations", params={"page": page, "page_size": page_size})
+        items = list(data.get("items", []) if isinstance(data, dict) else data or [])
+        return {"total": data.get("total", len(items)) if isinstance(data, dict) else len(items), "items": items}
 
     def get_conversation(self, session_id: str) -> Dict[str, Any]:
-        """API-10 ``GET /api/conversations/{session_id}``（第3周，回看历史 US-13）。"""
-        return self._request("GET", f"/api/conversations/{session_id}")
+        """API-10 ``GET /api/conversations/{session_id}``：恢复历史（接口文档 2.9、US-13）。
+
+        返回的消息会归一化成页面渲染用的结构（``answer`` / ``answer_type`` / ``citations``），
+        历史记录里没有 ``answer_type`` 字段，这里按"有引用即 answered、无引用且像兜底话术则 not_found"还原。
+        """
+        data = self._request("GET", f"/api/conversations/{session_id}")
+        messages: List[Dict[str, Any]] = []
+        for raw in data.get("messages", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            role = raw.get("role", "assistant")
+            text = _first(raw, ANSWER_TEXT_KEYS, "")
+            citations = [
+                _normalize_citation(c, i + 1)
+                for i, c in enumerate(raw.get("citations") or [])
+                if isinstance(c, dict)
+            ]
+            if role == "assistant":
+                fallback_words = ("未在", "抱歉", "没找到", "未找到")
+                answer_type = "answered" if citations else ("not_found" if any(w in text for w in fallback_words) else "answered")
+                messages.append({
+                    "role": "assistant",
+                    "answer": text,
+                    "content": text,
+                    "answer_type": answer_type,
+                    "citations": citations,
+                    "retrieved": [],
+                    "message_id": raw.get("message_id", ""),
+                    "trace_id": raw.get("trace_id", ""),
+                    "session_id": data.get("session_id", session_id),
+                    "created_at": raw.get("created_at", ""),
+                })
+            else:
+                messages.append({"role": "user", "content": text, "created_at": raw.get("created_at", "")})
+        return {
+            "session_id": data.get("session_id", session_id),
+            "title": data.get("title", ""),
+            "messages": messages,
+        }
 
     def clear_conversation(self, session_id: str) -> Dict[str, Any]:
         """API-11 ``DELETE /api/conversations/{session_id}``（第3周）。"""
