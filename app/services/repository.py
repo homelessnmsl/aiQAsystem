@@ -164,6 +164,12 @@ class Repository:
             self._conn.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
             self._conn.commit()
 
+    def set_document_status(self, doc_id: str, status: str) -> None:
+        """更新台账状态（删除接口用：status='deleted'，记录保留以便审计，接口文档 2.5）"""
+        with self._lock:
+            self._conn.execute("UPDATE documents SET status = ? WHERE doc_id = ?", (status, doc_id))
+            self._conn.commit()
+
     def delete_all_documents(self) -> int:
         """清空文档台账（脚本 --rebuild 时与向量库同步重建），返回删除行数"""
         with self._lock:
