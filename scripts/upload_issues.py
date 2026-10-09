@@ -77,8 +77,7 @@ def existing_titles(owner: str, repo: str, token: str) -> set[str]:
 
 
 def create_issue(owner: str, repo: str, token: str, issue: dict) -> str:
-    resp = requests.post(
-        f"{API}/repos/{owner}/{repo}/issues",
+    resp = requests.post(f"{API}/repos/{owner}/issues",
         data={
             "access_token": token,
             "repo": repo,
