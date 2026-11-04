@@ -43,3 +43,6 @@ data/eval/*
 # W3-04 扩容实验产物（由 scripts/generate_corpus.py 生成）
 data/corpus_*/
 data/chroma_*/
+
+# GitHub 同步令牌文件（本地，禁止提交）
+.github_token
